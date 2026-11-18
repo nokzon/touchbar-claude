@@ -1,0 +1,7 @@
+# Build output (recreate with ./build.sh)
+build/
+
+# Reference screen recordings (kept locally, not part of the project)
+*.mov
+
+.DS_Store
