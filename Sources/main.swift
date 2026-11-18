@@ -172,7 +172,10 @@ final class StatusModel {
             } else {
                 sub = "Editing files · \(Self.duration(t))"
             }
-            return Scene(mood: .working, t: t, title: "Building" + dots, subtitle: sub)
+            // A new spinner verb every few seconds, starting somewhere different each prompt.
+            let seed = Int(working.first?.workStart ?? 0) % SpinnerVerbs.all.count
+            let verb = SpinnerVerbs.all[(seed + Int(t / 3.2) * 11) % SpinnerVerbs.all.count]  // 11 is coprime with the count, so every verb comes up
+            return Scene(mood: .working, t: t, title: verb + dots, subtitle: sub)
         case .done:
             var sub = "All finished"
             if let s = done.max(by: { $0.since < $1.since }), !isPreview, s.workStart > 0, s.since > s.workStart {
@@ -202,6 +205,20 @@ final class StatusModel {
         if s < 3600 { return "\(s / 60)m \(s % 60)s" }
         return "\(s / 3600)h \(s % 3600 / 60)m"
     }
+}
+
+// MARK: - Spinner verbs (the playful words Claude Code shows while it works)
+
+enum SpinnerVerbs {
+    static let all = [
+        "Thinking", "Pondering", "Cogitating", "Brewing", "Clauding", "Combobulating",
+        "Noodling", "Percolating", "Ruminating", "Schlepping", "Simmering", "Finagling",
+        "Moseying", "Mulling", "Musing", "Marinating", "Conjuring", "Crafting", "Forging",
+        "Hatching", "Herding", "Honking", "Hustling", "Ideating", "Manifesting", "Mustering",
+        "Puttering", "Reticulating", "Shucking", "Smooshing", "Stewing", "Synthesizing",
+        "Transmuting", "Vibing", "Whirring", "Churning", "Crunching", "Deliberating",
+        "Spelunking", "Tinkering", "Wrangling", "Doodling",
+    ]
 }
 
 // MARK: - Views
@@ -263,6 +280,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     }
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        let titleFont = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        Renderer.workingTitleWidth = SpinnerVerbs.all
+            .map { NSAttributedString(string: $0 + "...", attributes: [.font: titleFont]).size().width }
+            .max() ?? 82
         fullView = MascotView(model: model, compact: false)
         fullView.widthAnchor.constraint(equalToConstant: MascotView.fullWidth).isActive = true
         trayView = MascotView(model: model, compact: true)

@@ -744,6 +744,8 @@ enum Renderer {
 
     // MARK: Text
 
+    static var workingTitleWidth: CGFloat = 82
+
     private static func drawText(_ sc: Scene, x: CGFloat, bounds: CGRect) {
         let title = NSAttributedString(string: sc.title, attributes: [
             .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
@@ -756,8 +758,9 @@ enum Renderer {
         let th = title.size().height
         let y = bounds.midY - th / 2
         title.draw(at: NSPoint(x: x, y: y))
-        // Fixed title column so the subtitle doesn't jitter as "Building..." dots animate.
-        let titleCol = max(title.size().width, sc.mood == .working ? 82 : 0)
+        // While working, the subtitle sits after a fixed column (wide enough for the longest
+        // spinner verb plus "..."), so it doesn't jump as the words and dots change.
+        let titleCol = sc.mood == .working ? workingTitleWidth : title.size().width
         sub.draw(at: NSPoint(x: x + titleCol + 10, y: y + (th - sub.size().height) / 2 + 0.5))
     }
 }
