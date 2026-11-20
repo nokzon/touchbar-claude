@@ -210,14 +210,13 @@ final class StatusModel {
 // MARK: - Spinner verbs (the playful words Claude Code shows while it works)
 
 enum SpinnerVerbs {
+    // Only words of similar width (about 65-86 pt at the title font), so the subtitle column
+    // stays tight: no gap left by one very long word, no tiny ones that look lost.
     static let all = [
-        "Thinking", "Pondering", "Cogitating", "Brewing", "Clauding", "Combobulating",
-        "Noodling", "Percolating", "Ruminating", "Schlepping", "Simmering", "Finagling",
-        "Moseying", "Mulling", "Musing", "Marinating", "Conjuring", "Crafting", "Forging",
-        "Hatching", "Herding", "Honking", "Hustling", "Ideating", "Manifesting", "Mustering",
-        "Puttering", "Reticulating", "Shucking", "Smooshing", "Stewing", "Synthesizing",
-        "Transmuting", "Vibing", "Whirring", "Churning", "Crunching", "Deliberating",
-        "Spelunking", "Tinkering", "Wrangling", "Doodling",
+        "Forging", "Herding", "Stewing", "Brewing", "Ideating", "Crafting", "Honking",
+        "Hustling", "Whirring", "Thinking", "Clauding", "Doodling", "Noodling", "Hatching",
+        "Finagling", "Churning", "Shucking", "Puttering", "Tinkering", "Moseying", "Conjuring",
+        "Mustering", "Wrangling", "Pondering", "Crunching", "Cogitating", "Marinating", "Simmering",
     ]
 }
 
@@ -265,14 +264,52 @@ final class MascotView: NSView {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NSMenuDelegate {
     let model = StatusModel()
-    let trayId = NSTouchBarItem.Identifier("com.claudebar.tray")
-    let mainId = NSTouchBarItem.Identifier("com.claudebar.main")
+    let trayId = NSTouchBarItem.Identifier("com.touchbarclaude.tray")
+    let mainId = NSTouchBarItem.Identifier("com.touchbarclaude.main")
     var bar: NSTouchBar!
     var trayView: MascotView!
     var fullView: MascotView!
     var statusItem: NSStatusItem!
     var timer: Timer?
     let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+
+    /// Bring the bar back on every status change, Ready included. Closing it with ✕ (or Hide)
+    /// still works: it stays closed until Claude's status next changes.
+    var keepShowing: Bool {
+        get { UserDefaults.standard.object(forKey: "keepShowing") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "keepShowing") }
+    }
+    let keepItem = NSMenuItem(title: "Keep on Touch Bar", action: nil, keyEquivalent: "")
+    /// While any screenshot UI is on screen (⌘⇧3 thumbnail, ⌘⇧4 crosshair, ⌘⇧5 toolbar, ⌘⇧6),
+    /// the bar steps aside so the Touch Bar shows the screenshot controls (Cancel, Options...).
+    private var steppedAside = false
+    private var lastScreenshotCheck = 0.0
+    private static let screenshotApps: Set<String> = ["com.apple.screencaptureui", "com.apple.screencapture", "com.apple.Screenshot"]
+
+    /// Checks window owners only (no window titles or contents, so no Screen Recording permission).
+    private static func screenshotOnScreen() -> Bool {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
+        return list.contains { w in
+            let name = (w[kCGWindowOwnerName as String] as? String ?? "").lowercased()
+            if name.contains("screencapture") || name == "screenshot" { return true }
+            guard let pid = w[kCGWindowOwnerPID as String] as? pid_t else { return false }
+            return screenshotApps.contains(NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? "")
+        }
+    }
+
+    private func checkScreenshot() {
+        let now = CACurrentMediaTime()
+        guard now - lastScreenshotCheck > 0.4 else { return }
+        lastScreenshotCheck = now
+        let on = Self.screenshotOnScreen()
+        if on, !steppedAside {
+            steppedAside = true
+            PrivateTouchBar.minimize(bar)
+        } else if !on, steppedAside {
+            steppedAside = false
+            if keepShowing { showBar() }
+        }
+    }
 
     var autoShow: Bool {
         get { UserDefaults.standard.object(forKey: "autoShow") as? Bool ?? true }
@@ -302,13 +339,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
         tray.view = trayView
         PrivateTouchBar.addSystemTrayItem(tray)
         PrivateTouchBar.setControlStripPresence(trayId, true)
-        PrivateTouchBar.showCloseBox(true)
+        PrivateTouchBar.showCloseBox(false)   // no ✕: hide the bar from the menu bar icon instead
 
         setupMenuBar()
 
         model.onMoodChange = { [weak self] m in
-            guard let self, self.autoShow, m != .idle else { return }
-            self.showBar()
+            guard let self, !self.steppedAside else { return }
+            if self.keepShowing || (self.autoShow && m != .idle) { self.showBar() }
         }
         model.tick()
         showBar()
@@ -319,12 +356,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
 
     private func frame() {
         model.tick()
+        checkScreenshot()
         fullView.needsDisplay = true
         trayView.needsDisplay = true
     }
 
     @objc func showBar() { PrivateTouchBar.present(bar, trayId: trayId) }
     @objc func hideBar() { PrivateTouchBar.minimize(bar) }
+
+    @objc private func toggleKeep(_ sender: NSMenuItem) {
+        keepShowing.toggle()
+        sender.state = keepShowing ? .on : .off
+        if keepShowing { showBar() }
+    }
 
     func touchBar(_ touchBar: NSTouchBar, makeItemForIdentifier id: NSTouchBarItem.Identifier) -> NSTouchBarItem? {
         guard id == mainId else { return nil }
@@ -345,6 +389,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
         menu.addItem(.separator())
         menu.addItem(withTitle: "Show on Touch Bar", action: #selector(showBar), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Hide from Touch Bar", action: #selector(hideBar), keyEquivalent: "").target = self
+        keepItem.action = #selector(toggleKeep(_:))
+        keepItem.target = self
+        keepItem.state = keepShowing ? .on : .off
+        menu.addItem(keepItem)
         let auto = menu.addItem(withTitle: "Pop up when status changes", action: #selector(toggleAuto(_:)), keyEquivalent: "")
         auto.target = self
         auto.state = autoShow ? .on : .off
@@ -358,7 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
         let p = menu.addItem(withTitle: "Preview animation", action: nil, keyEquivalent: "")
         menu.setSubmenu(previewMenu, for: p)
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit ClaudeBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: "Quit Touchbar Claude", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
     }
 
@@ -388,7 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     }
 }
 
-// `ClaudeBar --version` style CLI flags are not needed; just run the app.
+// `TouchbarClaude --version` style CLI flags are not needed; just run the app.
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

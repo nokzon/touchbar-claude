@@ -58,7 +58,7 @@ private func rgb(_ v: UInt32) -> CGColor {
 }
 
 private enum C {
-    static let clay = rgb(0xDD775B)
+    static let clay = rgb(0xD97757)
     static let eye = rgb(0x2A1B16)
     static let wood = rgb(0x8A5A3B)
     static let steel = rgb(0xA7AFB8)
@@ -70,7 +70,7 @@ private enum C {
     static let ink = rgb(0x1E1E1E)
     static let flagDark = rgb(0x4A4A4A)   // visible on the black Touch Bar
     static let paper = rgb(0xF4F1EA)
-    static let confetti: [CGColor] = [0xDD775B, 0xF2C14E, 0x6FB7E8, 0x8BD17C, 0xE86FA8, 0xF4F1EA].map(rgb)
+    static let confetti: [CGColor] = [0xD97757, 0xF2C14E, 0x6FB7E8, 0x8BD17C, 0xE86FA8, 0xF4F1EA].map(rgb)
 }
 
 // MARK: - Easing / helpers (GSAP-style)
@@ -377,7 +377,7 @@ enum Renderer {
         let x0: CGFloat = (compact ? bounds.minX + 2 + 10 * s0 : bounds.minX + 8 + 22 * s0) + keepCentre
 
         if !compact {
-            drawText(scene, x: bounds.minX + 8 + 22 * s0 + 206 * s0 + 10, bounds: bounds)
+            drawText(scene, x: bounds.minX + 8 + 22 * s0 + 206 * s0 + 10, maxX: bounds.maxX - 6, bounds: bounds)
         }
 
         c.saveGState()
@@ -746,12 +746,15 @@ enum Renderer {
 
     static var workingTitleWidth: CGFloat = 82
 
-    private static func drawText(_ sc: Scene, x: CGFloat, bounds: CGRect) {
+    private static func drawText(_ sc: Scene, x: CGFloat, maxX: CGFloat, bounds: CGRect) {
         let title = NSAttributedString(string: sc.title, attributes: [
             .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
             .foregroundColor: NSColor.white,
         ])
+        let para = NSMutableParagraphStyle()
+        para.lineBreakMode = .byTruncatingTail
         let sub = NSAttributedString(string: sc.subtitle, attributes: [
+            .paragraphStyle: para,
             .font: NSFont.systemFont(ofSize: 12, weight: .regular),
             .foregroundColor: NSColor(white: 1, alpha: 0.6),
         ])
@@ -761,6 +764,8 @@ enum Renderer {
         // While working, the subtitle sits after a fixed column (wide enough for the longest
         // spinner verb plus "..."), so it doesn't jump as the words and dots change.
         let titleCol = sc.mood == .working ? workingTitleWidth : title.size().width
-        sub.draw(at: NSPoint(x: x + titleCol + 10, y: y + (th - sub.size().height) / 2 + 0.5))
+        let subX = x + titleCol + 10
+        sub.draw(with: NSRect(x: subX, y: y + (th - sub.size().height) / 2 + 0.5, width: max(0, maxX - subX), height: sub.size().height),
+                 options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
     }
 }
