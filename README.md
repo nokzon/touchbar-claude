@@ -1,15 +1,22 @@
+
 # Touchbar Claude
 
-A little pixel Claude critter on your MacBook Touch Bar that shows what Claude Code is doing.
+A little Claude guy on your MacBook Touch Bar that shows what Claude Code is doing, with the states:
+#### Ready
+<img width="1085" height="30" alt="Touch Bar Shot 2026-11-20 at 5 11 59 PM" src="https://github.com/user-attachments/assets/058f16f5-76c1-4f45-9292-b77e7c42cda8" />
 
-| Claude Code is…            | Touch Bar shows                                              |
-|----------------------------|--------------------------------------------------------------|
-| waiting for your prompt    | **Ready**: breathes, blinks, looks around                    |
-| working (thinking / tools) | **Building…**: hammers a brick wall, with the current tool and elapsed time |
-| asking for permission      | **Needs you**: waves with a "!" bubble                       |
-| finished                   | **Done!**: stomps with confetti, then waves a checkered finish flag |
+#### Building
+<img width="1085" height="30" alt="Touch Bar Shot 2026-11-20 at 5 12 16 PM" src="https://github.com/user-attachments/assets/f3cc5c26-6fd3-4e77-859f-e0691de239e5" />
 
-After 1 minute of "Done" it goes back to Ready.
+#### Needs you 
+<img width="1085" height="30" alt="Touch Bar Shot 2026-11-20 at 5 14 10 PM" src="https://github.com/user-attachments/assets/0b59dc49-53f1-4e6f-96f6-c5e7075de15d" />
+
+#### Done
+<img width="1085" height="30" alt="Touch Bar Shot 2026-11-20 at 5 12 22 PM" src="https://github.com/user-attachments/assets/a2861c89-4eed-4410-bb4d-6cda91e292b5" /><img width="1085" height="30" alt="Touch Bar Shot 2026-11-20 at 5 12 19 PM" src="https://github.com/user-attachments/assets/7c75d239-2dea-45ea-bd3e-bbdf167442d4" />
+
+#### It also shows more information by tapping on the Claude icon
+<img width="1085" height="30" alt="Touch Bar Shot 2026-11-20 at 5 14 20 PM" src="https://github.com/user-attachments/assets/3831dce5-7ea0-47c0-8e76-859f89dd1ff4" />
+
 
 ## Running it
 
@@ -19,6 +26,8 @@ The Claude Code hooks only need installing once, and they stay installed. After 
 - **Start it automatically at login:** `./install.sh --login` (one time)
 - **After changing the code:** `./build.sh`, then quit Touchbar Claude from its menu bar icon and open it again
 - **Stop it:** menu bar icon → Quit Touchbar Claude
+<img width="307" height="233" alt="image" src="https://github.com/user-attachments/assets/55aa0922-937b-41c1-bb30-450b2f58749b" />
+
 - **Preview an animation:** menu bar icon → Preview animation
 
 ## Install
@@ -30,28 +39,3 @@ The Claude Code hooks only need installing once, and they stay installed. After 
 ```
 
 The installer backs up `~/.claude/settings.json` to `settings.json.claudebar-backup` first.
-
-## How it works
-
-- `hooks/claudebar-hook.sh` runs on Claude Code hook events (SessionStart, UserPromptSubmit,
-  Pre/PostToolUse, Notification `permission_prompt`, Stop, SessionEnd) and writes one small
-  file per session to `~/.claude/claudebar/sessions/`.
-- `Touchbar Claude.app` reads those files and draws the mascot procedurally at 30 fps (rectangles
-  only, GSAP-style easing, sprite-style stepped frames for the stomp and the flag). The idea
-  comes from the Codrops article "Reverse-Engineering Claude AI's Mascot Animations with SVG and GSAP".
-- It uses the same private Touch Bar API that Pock and MTMR use, so it works on top of any app.
-  A mini mascot lives in the Control Strip; tap it to bring the full bar back after closing it with ✕.
-- Menu bar icon: show or hide it, turn pop-up-on-change on or off, and preview each animation.
-
-## Details (tap the mascot)
-
-Tap the bar (or the mini mascot in the Control Strip) to see, for the current session:
-**model + effort**, **context used** (e.g. 173k/200k, with a gauge), **plan usage** (5-hour % with
-time until reset, plus weekly %), and **project + session length**. It flips back after 15 s, or tap again.
-
-Model, context and session info come from the session transcript. Plan usage comes from a
-status line script (`claudebar-statusline.sh`, which prints nothing). Claude Code only sends usage
-limits to status lines, and only on Pro/Max plans. When there's no usage data, the bar shows
-tokens written instead. If you already have your own status line, the installer leaves it alone.
-
-Multiple sessions: "Needs you" wins, then "Building", then "Done".
