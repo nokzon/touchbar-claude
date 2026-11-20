@@ -1,5 +1,5 @@
 #!/bin/sh
-# ClaudeBar status line: saves what Claude Code passes to status lines (plan usage limits,
+# Touchbar Claude status line: saves what Claude Code passes to status lines (plan usage limits,
 # cost, context) so the Touch Bar details view can show it. Prints nothing, so the
 # status line itself stays empty.
 dir="$HOME/.claude/claudebar/status"

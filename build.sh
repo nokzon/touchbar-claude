@@ -1,18 +1,19 @@
 #!/bin/sh
-# Builds build/ClaudeBar.app
+# Builds build/Touchbar Claude.app
 set -e
 cd "$(dirname "$0")"
-APP=build/ClaudeBar.app
+APP="build/Touchbar Claude.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
-swiftc -O -o "$APP/Contents/MacOS/ClaudeBar" Sources/*.swift -framework Cocoa
+swiftc -O -o "$APP/Contents/MacOS/TouchbarClaude" Sources/*.swift -framework Cocoa
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>ClaudeBar</string>
-  <key>CFBundleIdentifier</key><string>com.claudebar.app</string>
-  <key>CFBundleExecutable</key><string>ClaudeBar</string>
+  <key>CFBundleName</key><string>Touchbar Claude</string>
+  <key>CFBundleDisplayName</key><string>Touchbar Claude</string>
+  <key>CFBundleIdentifier</key><string>com.touchbarclaude.app</string>
+  <key>CFBundleExecutable</key><string>TouchbarClaude</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>LSUIElement</key><true/>

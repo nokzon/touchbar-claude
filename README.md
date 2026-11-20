@@ -1,4 +1,4 @@
-# ClaudeBar
+# Touchbar Claude
 
 A little pixel Claude critter on your MacBook Touch Bar that shows what Claude Code is doing.
 
@@ -15,17 +15,17 @@ After 1 minute of "Done" it goes back to Ready.
 
 The Claude Code hooks only need installing once, and they stay installed. After that:
 
-- **Start it** (for example after restarting your Mac): `open build/ClaudeBar.app`
+- **Start it** (for example after restarting your Mac): `open "build/Touchbar Claude.app"`
 - **Start it automatically at login:** `./install.sh --login` (one time)
-- **After changing the code:** `./build.sh`, then quit ClaudeBar from its menu bar icon and open it again
-- **Stop it:** menu bar icon → Quit ClaudeBar
+- **After changing the code:** `./build.sh`, then quit Touchbar Claude from its menu bar icon and open it again
+- **Stop it:** menu bar icon → Quit Touchbar Claude
 - **Preview an animation:** menu bar icon → Preview animation
 
 ## Install
 
 ```bash
 ./install.sh            # build, add Claude Code hooks, launch
-./install.sh --login    # same, and start ClaudeBar automatically at login
+./install.sh --login    # same, and start Touchbar Claude automatically at login
 ./install.sh --uninstall
 ```
 
@@ -36,7 +36,7 @@ The installer backs up `~/.claude/settings.json` to `settings.json.claudebar-bac
 - `hooks/claudebar-hook.sh` runs on Claude Code hook events (SessionStart, UserPromptSubmit,
   Pre/PostToolUse, Notification `permission_prompt`, Stop, SessionEnd) and writes one small
   file per session to `~/.claude/claudebar/sessions/`.
-- `ClaudeBar.app` reads those files and draws the mascot procedurally at 30 fps (rectangles
+- `Touchbar Claude.app` reads those files and draws the mascot procedurally at 30 fps (rectangles
   only, GSAP-style easing, sprite-style stepped frames for the stomp and the flag). The idea
   comes from the Codrops article "Reverse-Engineering Claude AI's Mascot Animations with SVG and GSAP".
 - It uses the same private Touch Bar API that Pock and MTMR use, so it works on top of any app.

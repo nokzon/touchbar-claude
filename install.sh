@@ -1,13 +1,13 @@
 #!/bin/sh
-# Builds ClaudeBar, installs the Claude Code hooks, and (optionally) starts it at login.
+# Builds Touchbar Claude, installs the Claude Code hooks, and (optionally) starts it at login.
 #   ./install.sh            build + hooks + launch
-#   ./install.sh --login    also start ClaudeBar automatically when you log in
+#   ./install.sh --login    also start Touchbar Claude automatically when you log in
 #   ./install.sh --uninstall
 set -e
 cd "$(dirname "$0")"
 HOOK_DIR="$HOME/.claude/claudebar"
 SETTINGS="$HOME/.claude/settings.json"
-AGENT="$HOME/Library/LaunchAgents/com.claudebar.app.plist"
+AGENT="$HOME/Library/LaunchAgents/com.touchbarclaude.app.plist"
 
 if [ "$1" = "--uninstall" ]; then
   python3 - "$SETTINGS" remove <<'PY'
@@ -23,9 +23,9 @@ if "claudebar" in s.get("statusLine", {}).get("command", ""): s.pop("statusLine"
 json.dump(s, open(p, "w"), indent=2)
 PY
   launchctl unload "$AGENT" 2>/dev/null || true
-  rm -f "$AGENT"; pkill -x ClaudeBar || true
+  rm -f "$AGENT"; pkill -x TouchbarClaude || true
   rm -rf "$HOOK_DIR"
-  echo "ClaudeBar removed."
+  echo "Touchbar Claude removed."
   exit 0
 fi
 
@@ -73,17 +73,17 @@ if [ "$1" = "--login" ]; then
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key><string>com.claudebar.app</string>
-  <key>ProgramArguments</key><array><string>$(pwd)/build/ClaudeBar.app/Contents/MacOS/ClaudeBar</string></array>
+  <key>Label</key><string>com.touchbarclaude.app</string>
+  <key>ProgramArguments</key><array><string>$(pwd)/build/Touchbar Claude.app/Contents/MacOS/TouchbarClaude</string></array>
   <key>RunAtLoad</key><true/>
 </dict></plist>
 PLIST
   launchctl unload "$AGENT" 2>/dev/null || true
   launchctl load "$AGENT"
-  echo "ClaudeBar will start at login."
+  echo "Touchbar Claude will start at login."
 fi
 
-pkill -x ClaudeBar 2>/dev/null || true
+pkill -x TouchbarClaude 2>/dev/null || true
 sleep 0.5
-open build/ClaudeBar.app
-echo "ClaudeBar is running. Look at your Touch Bar."
+open "build/Touchbar Claude.app"
+echo "Touchbar Claude is running. Look at your Touch Bar."

@@ -1,5 +1,5 @@
 #!/bin/sh
-# ClaudeBar hook: records what each Claude Code session is doing.
+# Touchbar Claude hook: records what each Claude Code session is doing.
 # Usage (from Claude Code hooks): claudebar-hook.sh idle|working|waiting|done|end
 # Writes ~/.claude/claudebar/sessions/<session_id> as: state since workStart updated tool
 # Must stay silent on stdout (UserPromptSubmit output would be added to the prompt).

@@ -88,7 +88,7 @@ func compactTokens(_ n: Int) -> String {
     return "\(n)"
 }
 
-/// Account-wide plan usage + per-session cost, captured by the ClaudeBar status line.
+/// Account-wide plan usage + per-session cost, captured by the Touchbar Claude status line.
 struct Limits {
     var fiveHour: Double?, fiveReset: Double?
     var week: Double?, weekReset: Double?
@@ -96,7 +96,7 @@ struct Limits {
 
     static func read(sessionId: String?) -> Limits? {
         let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/claudebar/status")
-        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return nil }
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         let jsons = files.filter { $0.pathExtension == "json" }
         func load(_ u: URL) -> [String: Any]? {
             guard let d = try? Data(contentsOf: u) else { return nil }
@@ -184,8 +184,8 @@ enum DetailsRenderer {
         return s >= 3600 ? "\(Int(s / 3600))h\(Int(s.truncatingRemainder(dividingBy: 3600) / 60))m" : "\(Int(s / 60))m"
     }
 
-    private static func gauge(_ c: CGContext, x: CGFloat, y: CGFloat, pct: Double) {
-        let w: CGFloat = 32, h: CGFloat = 6
+    static func gauge(_ c: CGContext, x: CGFloat, y: CGFloat, pct: Double, width w: CGFloat = 32) {
+        let h: CGFloat = 6
         c.setFillColor(CGColor(gray: 1, alpha: 0.18))
         c.fill(CGRect(x: x, y: y, width: w, height: h))
         let p = min(1, max(0, pct))
