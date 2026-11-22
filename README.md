@@ -1,7 +1,7 @@
 
 # Touchbar Claude
 
-A little Claude guy on your MacBook Touch Bar that shows what Claude Code is doing, with the states:
+A little Claude guy on your MacBook Touch Bar that shows what Claude Code is doing! with the states:
 #### Ready
 <img width="1085" height="30" alt="Touch Bar Shot 2026-11-20 at 5 11 59 PM" src="https://github.com/user-attachments/assets/058f16f5-76c1-4f45-9292-b77e7c42cda8" />
 
@@ -30,11 +30,25 @@ The Claude Code hooks only need installing once, and they stay installed. After 
 
 - **Preview an animation:** menu bar icon → Preview animation
 
-## Install
+## Installing / Running it
+1. Open up your terminal and navigate to your project folder
 
+⋆˚꩜｡ If it's your first time setting it up, run the installer once
 ```bash
-./install.sh            # build, add Claude Code hooks, launch
-./install.sh --login    # same, and start Touchbar Claude automatically at login
+./install.sh
+```
+After that, you can use this one line to run it, for example after you restart your laptop
+```bash
+open "build/Touchbar Claude.app"
+```
+---
+.✦ ݁˖ To have it start on its own every time you log in, run this once instead and you won't need to launch it by hand:
+```bash
+./install.sh --login
+```
+---
+ᯓ★ To uninstall, run the line below:
+```bash
 ./install.sh --uninstall
 ```
 
