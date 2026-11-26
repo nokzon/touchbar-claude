@@ -1,6 +1,6 @@
 # Touchbar Claude
 
-A little Claude guy on your MacBook Touch Bar that shows what Claude Code is doing.
+A little Claude guy on your MacBook Touch Bar that shows what Claude Code is doing :D
 
 ## What it shows
 
