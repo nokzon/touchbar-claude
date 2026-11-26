@@ -149,6 +149,45 @@ final class StatusModel {
         return (d, l)
     }
 
+    // MARK: Jump to the session (tap)
+
+    /// Brings the app running the focus session to the front (Terminal, iTerm, VS Code, Claude...).
+    func activateFocusApp() {
+        var target: NSRunningApplication?
+        if let sid = focusSession?.id {
+            let meta = Self.dir.deletingLastPathComponent().appendingPathComponent("meta/\(sid)")
+            let lines = (try? String(contentsOf: meta, encoding: .utf8))?
+                .components(separatedBy: "\n") ?? []
+            // Walk up from the first ancestor still alive to the GUI app that owns it.
+            let pids = (lines.count > 3 ? lines[3] : "").split(separator: " ").compactMap { pid_t($0) }
+            if let live = pids.first(where: { kill($0, 0) == 0 }) { target = Self.guiApp(above: live) }
+            if target == nil, lines.count > 2, !lines[2].isEmpty {
+                target = NSRunningApplication.runningApplications(withBundleIdentifier: lines[2]).first
+            }
+        }
+        if target == nil {   // no session info: fall back to the Claude desktop app if it's open
+            target = NSRunningApplication.runningApplications(withBundleIdentifier: "com.anthropic.claudefordesktop").first
+        }
+        target?.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+    }
+
+    private static func guiApp(above pid: pid_t) -> NSRunningApplication? {
+        var p = pid
+        for _ in 0..<20 where p > 1 {
+            if let app = NSRunningApplication(processIdentifier: p), app.activationPolicy == .regular { return app }
+            p = parentPid(p)
+        }
+        return nil
+    }
+
+    private static func parentPid(_ pid: pid_t) -> pid_t {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return 0 }
+        return info.kp_eproc.e_ppid
+    }
+
     // MARK: Text for the bar
 
     func scene() -> Scene {
@@ -226,6 +265,8 @@ final class MascotView: NSView {
     let model: StatusModel
     let compact: Bool
     var onTap: (() -> Void)?
+    var onLongPress: (() -> Void)?
+    private var swallowTap = false
     /// Full bar only: show model / context / usage instead of the status text.
     var detailsUntil: Double = 0
     var showingDetails: Bool { !compact && CACurrentMediaTime() < detailsUntil }
@@ -239,6 +280,10 @@ final class MascotView: NSView {
         let tap = NSClickGestureRecognizer(target: self, action: #selector(tapped))
         tap.allowedTouchTypes = .direct
         addGestureRecognizer(tap)
+        let hold = NSPressGestureRecognizer(target: self, action: #selector(held(_:)))
+        hold.allowedTouchTypes = .direct
+        hold.minimumPressDuration = 0.45
+        addGestureRecognizer(hold)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -246,7 +291,17 @@ final class MascotView: NSView {
     override var isFlipped: Bool { true }
     override var intrinsicContentSize: NSSize { NSSize(width: compact ? 46 : Self.fullWidth, height: 30) }
 
-    @objc private func tapped() { onTap?() }
+    @objc private func tapped() {
+        if swallowTap { swallowTap = false; return }   // the finger-up that ended a long press
+        onTap?()
+    }
+
+    @objc private func held(_ g: NSPressGestureRecognizer) {
+        guard g.state == .began else { return }
+        swallowTap = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.swallowTap = false }
+        onLongPress?()
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let c = NSGraphicsContext.current?.cgContext else { return }
@@ -325,11 +380,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
         fullView.widthAnchor.constraint(equalToConstant: MascotView.fullWidth).isActive = true
         trayView = MascotView(model: model, compact: true)
         trayView.widthAnchor.constraint(equalToConstant: 46).isActive = true
-        trayView.onTap = { [weak self] in
+        // Tap: jump to the app running Claude. Long-press: model / context / usage details.
+        trayView.onTap = { [weak self] in self?.showBar() }
+        trayView.onLongPress = { [weak self] in
             self?.showBar()
             self?.fullView.detailsUntil = CACurrentMediaTime() + 15
         }
-        fullView.onTap = { [weak self] in self?.fullView.toggleDetails() }
+        fullView.onTap = { [weak self] in self?.model.activateFocusApp() }
+        fullView.onLongPress = { [weak self] in self?.fullView.toggleDetails() }
 
         bar = NSTouchBar()
         bar.delegate = self

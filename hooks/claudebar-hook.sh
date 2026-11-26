@@ -25,7 +25,23 @@ transcript=$(field transcript_path); case "$transcript" in *"Could not extract"*
 cwd=$(field cwd); case "$cwd" in *"Could not extract"*) cwd="" ;; esac
 if [ -n "$transcript" ] && [ "$state" != "end" ]; then
   mkdir -p "$meta" 2>/dev/null
-  printf '%s\n%s\n' "$transcript" "$cwd" > "$meta/$sid"
+  # Lines 3-4: the app hosting this session (so tapping the bar can bring it forward).
+  # Worked out once per session: bundle id the app passed down, and our ancestor pids.
+  app=""; chain=""
+  if [ -f "$meta/$sid" ]; then
+    app=$(sed -n 3p "$meta/$sid"); chain=$(sed -n 4p "$meta/$sid")
+  fi
+  if [ -z "$chain" ]; then
+    app=$(printf '%s' "${__CFBundleIdentifier:-}" | tr -cd 'A-Za-z0-9._-')
+    p=$PPID; i=0
+    while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null && [ $i -lt 15 ]; do
+      chain="$chain $p"
+      p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+      i=$((i + 1))
+    done
+    chain=${chain# }
+  fi
+  printf '%s\n%s\n%s\n%s\n' "$transcript" "$cwd" "$app" "$chain" > "$meta/$sid"
 fi
 
 if [ "$state" = "end" ]; then
