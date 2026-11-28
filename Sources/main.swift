@@ -62,7 +62,9 @@ final class StatusModel {
     private var promptStart = 0.0
     private var promptUntil = 0.0
     private var slideFrom: CGFloat = 0
-    private var preview: (mood: Mood, until: Double)?
+    private var preview: (mood: Mood, warning: Warning?, until: Double)?
+    private var warning: Warning?
+    private var lastWarningCheck = 0.0
     var onMoodChange: ((Mood) -> Void)?
 
     func tick() {
@@ -80,10 +82,24 @@ final class StatusModel {
             if now < p.until { m = p.mood } else { preview = nil }
         }
         setMood(m)
+        if let p = preview {
+            warning = p.warning
+            lastWarningCheck = 0          // go back to the real value as soon as the preview ends
+        } else if now - lastWarningCheck >= 2 {
+            lastWarningCheck = now
+            warning = currentWarning()
+        }
     }
 
-    func startPreview(_ m: Mood) {
-        preview = (m, CACurrentMediaTime() + (m == .done ? 20 : 12))
+    private func currentWarning() -> Warning? {
+        // Context belongs to one session, so only warn while that session is still running.
+        let sid = focusSession.map(\.id).flatMap { Self.hostApp(of: $0) != nil ? $0 : nil }
+        guard let l = Limits.read(sessionId: sid) else { return nil }
+        return Warning.from(l, context: l.context)
+    }
+
+    func startPreview(_ m: Mood, warning: Warning? = nil) {
+        preview = (m, warning, CACurrentMediaTime() + (m == .done ? 20 : 12))
         mood = m == .idle ? .working : .idle   // force a change so the animation restarts
         lastPoll = 0
         tick()
@@ -250,6 +266,23 @@ final class StatusModel {
     // MARK: Text for the bar
 
     func scene() -> Scene {
+        var s = moodScene()
+        guard let w = warning else { return s }
+        s.health = w.health
+        switch s.mood {
+        case .idle where canJump || preview != nil:
+            s.title = w.health == .tired ? "Tired" : "Stressed"
+            s.subtitle = w.text
+            s.roaming = false
+        case .working:
+            s.subtitle += " · " + w.short
+        default:
+            break                      // keep "Needs you", "Done!" and "Tap to start Claude"
+        }
+        return s
+    }
+
+    private func moodScene() -> Scene {
         let t = CACurrentMediaTime() - animStart
         let now = Date().timeIntervalSince1970
         let isPreview = preview != nil
@@ -529,6 +562,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
             it.target = self
             it.representedObject = m.rawValue
         }
+        for (title, w) in [("Tired (context full)", Warning(health: .tired, text: "Context 85% full · try /compact", short: "context 85%")),
+                           ("Stressed (limit)", Warning(health: .stressed, text: "5h limit 91% used · resets in 1h 20m", short: "5h limit 91%"))] {
+            let it = previewMenu.addItem(withTitle: title, action: #selector(previewWarning(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = w
+        }
         let p = menu.addItem(withTitle: "Preview animation", action: nil, keyEquivalent: "")
         menu.setSubmenu(previewMenu, for: p)
         menu.addItem(.separator())
@@ -550,6 +589,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
         guard let raw = sender.representedObject as? String, let m = Mood(rawValue: raw) else { return }
         showBar()
         model.startPreview(m)
+    }
+
+    @objc private func previewWarning(_ sender: NSMenuItem) {
+        guard let w = sender.representedObject as? Warning else { return }
+        showBar()
+        model.startPreview(.idle, warning: w)
     }
 
     private static func menuIcon() -> NSImage {

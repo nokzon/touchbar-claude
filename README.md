@@ -16,6 +16,10 @@ A little Claude guy on your MacBook Touch Bar that shows what Claude Code is doi
 #### Done
 <img width="1085" height="30" alt="Touch Bar Shot 2026-11-20 at 5 12 22 PM" src="https://github.com/user-attachments/assets/a2861c89-4eed-4410-bb4d-6cda91e292b5" /><img width="1085" height="30" alt="Touch Bar Shot 2026-11-20 at 5 12 19 PM" src="https://github.com/user-attachments/assets/7c75d239-2dea-45ea-bd3e-bbdf167442d4" />
 
+#### Tired and stressed
+- **Tired** (dozing, with z's): the session's context window is at least 80% full. Try `/compact`.
+- **Stressed** (trembling and sweating): your 5-hour or weekly usage limit is at least 80% used.
+
 ## Tap and hold
 
 - **Tap** the bar to jump back to your Claude session.

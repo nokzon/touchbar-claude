@@ -93,6 +93,7 @@ struct Limits {
     var fiveHour: Double?, fiveReset: Double?
     var week: Double?, weekReset: Double?
     var cost: Double?
+    var context: Double?          // how full this session's context window is, 0...100
 
     static func read(sessionId: String?) -> Limits? {
         let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/claudebar/status")
@@ -113,11 +114,44 @@ struct Limits {
             l.week = (week?["used_percentage"] as? NSNumber)?.doubleValue
             l.weekReset = (week?["resets_at"] as? NSNumber)?.doubleValue
         }
-        if let sid = sessionId, let o = load(dir.appendingPathComponent("\(sid).json")),
-           let cost = o["cost"] as? [String: Any] {
-            l.cost = (cost["total_cost_usd"] as? NSNumber)?.doubleValue
+        if let sid = sessionId, let o = load(dir.appendingPathComponent("\(sid).json")) {
+            let cost = o["cost"] as? [String: Any], window = o["context_window"] as? [String: Any]
+            l.cost = (cost?["total_cost_usd"] as? NSNumber)?.doubleValue
+            l.context = (window?["used_percentage"] as? NSNumber)?.doubleValue
         }
         return l
+    }
+}
+
+/// Why the mascot looks tired (context nearly full) or stressed (a plan limit nearly used up).
+struct Warning {
+    static let threshold = 80.0   // percent
+
+    var health: Health
+    var text: String              // shown when idle
+    var short: String             // added to the subtitle while working
+
+    /// A plan limit comes first: it stops everything, a full context only needs /compact.
+    /// `context` is nil when there's no running session to warn about.
+    static func from(_ l: Limits, context: Double?) -> Warning? {
+        let now = Date().timeIntervalSince1970
+        let plan = [("5h limit", l.fiveHour, l.fiveReset), ("weekly limit", l.week, l.weekReset)]
+        let hit = plan.compactMap { name, used, reset -> (String, Double, Double?)? in
+            // A limit whose reset time has passed is old data.
+            guard let used, used >= threshold, (reset ?? .infinity) > now else { return nil }
+            return (name, used, reset)
+        }.max { $0.1 < $1.1 }
+        if let (name, used, reset) = hit {
+            let short = "\(name) \(Int(used.rounded()))%"
+            var text = short.prefix(1).uppercased() + short.dropFirst() + " used"
+            if let reset { text += " · resets in " + DetailsRenderer.resetIn(reset) }
+            return Warning(health: .stressed, text: text, short: short)
+        }
+        if let context, context >= threshold {
+            let short = "context \(Int(context.rounded()))%"
+            return Warning(health: .tired, text: "Context \(Int(context.rounded()))% full · try /compact", short: short)
+        }
+        return nil
     }
 }
 
@@ -179,7 +213,7 @@ enum DetailsRenderer {
         }
     }
 
-    private static func resetIn(_ epoch: Double) -> String {
+    static func resetIn(_ epoch: Double) -> String {
         let s = max(0, epoch - Date().timeIntervalSince1970)
         return s >= 3600 ? "\(Int(s / 3600))h\(Int(s.truncatingRemainder(dividingBy: 3600) / 60))m" : "\(Int(s / 60))m"
     }

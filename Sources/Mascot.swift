@@ -6,6 +6,8 @@ import QuartzCore
 // Everything is drawn procedurally every frame from the current mood + elapsed time.
 
 enum Mood: String { case idle, working, waiting, done }
+/// How the mascot feels: tired when the context is nearly full, stressed near a usage limit.
+enum Health { case fine, tired, stressed }
 
 struct ArmPose { var dx: CGFloat = 0; var dy: CGFloat = 0; var rot: CGFloat = 0 }
 enum EyeStyle { case normal, focused, happy }
@@ -31,6 +33,7 @@ struct Scene {
     var subtitle: String
     var roaming = false    // no session: just the mascot, wandering the whole bar
     var slideFrom: CGFloat = 0   // where it was roaming when tapped; it dashes home from there
+    var health: Health = .fine
 }
 
 // MARK: - Geometry & palette
@@ -72,6 +75,7 @@ private enum C {
     static let ink = rgb(0x1E1E1E)
     static let flagDark = rgb(0x4A4A4A)   // visible on the black Touch Bar
     static let paper = rgb(0xF4F1EA)
+    static let sweat = rgb(0x6FB7E8)
     static let confetti: [CGColor] = [0xD97757, 0xF2C14E, 0x6FB7E8, 0x8BD17C, 0xE86FA8, 0xF4F1EA].map(rgb)
 }
 
@@ -206,6 +210,25 @@ private func idlePose(_ t: Double, distance: CGFloat = walkDistance, walkTime: D
         blink(&p, t)
     }
     return p
+}
+
+/// Changes a pose to match how the mascot feels. Works on top of any mood.
+private func applyHealth(_ p: inout Pose, _ health: Health, _ t: Double) {
+    switch health {
+    case .fine:
+        break
+    case .tired:
+        // Heavy eyelids that now and then fall shut, a slumped body and hanging arms.
+        p.blink = min(p.blink, fmod(t, 4.2) > 3.2 ? 0.15 : 0.45)
+        p.eyeDY += 2
+        p.bodySY *= 0.94
+        p.bodyDY += 2
+        p.lArm.dy += 5; p.rArm.dy += 3
+    case .stressed:
+        // Trembling, with eyes darting from side to side.
+        p.bodyDX += CGFloat(1.5 * sin(t * 50))
+        p.eyeDX += fmod(t, 1.0) < 0.5 ? -3 : 3
+    }
 }
 
 private let hammerPeriod = 0.72
@@ -405,7 +428,10 @@ enum Renderer {
         switch sc.mood {
         case .idle:
             var p: Pose
-            if sc.roaming && !compact {
+            if sc.health == .tired {            // too tired to stroll: stays put and dozes
+                p = Pose()
+                breathe(&p, t * 0.6)
+            } else if sc.roaming && !compact {
                 let stops = 6
                 let distance = roamSpan / CGFloat(stops)
                 // Same walking speed as the short stroll next to the text.
@@ -417,17 +443,26 @@ enum Renderer {
                 if sc.slideFrom > 0 { p.gx += sc.slideFrom * CGFloat(1 - power2Out(seg(t, 0, slideTime))) }
             }
             if compact { p.gx = 0 }
+            applyHealth(&p, sc.health, t)
             drawMascot(c, p)
+            if sc.health == .tired { drawSnooze(c, t, x: p.gx) }
+            if sc.health == .stressed { drawSweat(c, t, x: p.gx) }
 
         case .waiting:
-            let p = waitingPose(t)
+            var p = waitingPose(t)
+            applyHealth(&p, sc.health, t)
             drawMascot(c, p)
             drawBubble(c, t)
+            if sc.health == .stressed { drawSweat(c, t, x: 0) }
 
         case .working:
-            if !compact { drawWall(c, t) }
-            drawMascot(c, workingPose(t), prop: drawHammer)
-            drawSparks(c, t)
+            let wt = sc.health == .tired ? t * 0.6 : t     // a tired mascot hammers slowly
+            if !compact { drawWall(c, wt) }
+            var p = workingPose(wt)
+            applyHealth(&p, sc.health, t)
+            drawMascot(c, p, prop: drawHammer)
+            drawSparks(c, wt)
+            if sc.health == .stressed { drawSweat(c, t, x: 0) }
 
         case .done:
             drawConfetti(c, t)      // behind the mascot
@@ -763,6 +798,36 @@ enum Renderer {
         }
         c.beginPath(); c.addRects(rects); c.fillPath()
         c.restoreGState()
+    }
+
+    // MARK: Tired and stressed
+
+    /// Pixel "z"s drifting up from the head, growing and fading.
+    private static func drawSnooze(_ c: CGContext, _ t: Double, x: CGFloat) {
+        let glyph = ["####", "..#.", ".#..", "####"]
+        for i in 0..<3 {
+            let k = fmod(t / 2.4 + Double(i) / 3, 1)
+            let px = CGFloat(2 + 1.5 * k)
+            let origin = CGPoint(x: x + 102 + CGFloat(18 * k), y: 6 - CGFloat(24 * k))
+            c.setFillColor(CGColor(gray: 1, alpha: CGFloat(min(1, 2.5 * (1 - k)) * min(1, 5 * k))))
+            for (r, row) in glyph.enumerated() {
+                for (col, ch) in row.enumerated() where ch == "#" {
+                    c.fill(CGRect(x: origin.x + CGFloat(col) * px, y: origin.y + CGFloat(r) * px, width: px, height: px))
+                }
+            }
+        }
+    }
+
+    /// Drops of sweat flying off both sides of the head.
+    private static func drawSweat(_ c: CGContext, _ t: Double, x: CGFloat) {
+        for (side, delay) in [(CGFloat(-1), 0.0), (CGFloat(1), 0.45)] {
+            let k = fmod(t + delay, 0.9) / 0.9
+            let dx = x + (side < 0 ? 1 : 106) + side * CGFloat(12 * k)
+            let dy = CGFloat(-6 + 30 * k * k)
+            c.setFillColor(C.sweat)
+            c.fill(CGRect(x: dx - 2, y: dy, width: 4, height: 4))     // tip
+            c.fill(CGRect(x: dx - 4, y: dy + 4, width: 8, height: 7))
+        }
     }
 
     // MARK: Text
