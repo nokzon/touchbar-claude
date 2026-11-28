@@ -60,7 +60,12 @@ final class StatusModel {
     /// While the mascot is being petted the idle animation is paused, so it stays under your finger.
     private var petStart: Double?
     private var petEnd = 0.0
-    private var clock: Double { petStart ?? CACurrentMediaTime() }
+    /// After this long with nothing happening the mascot dozes off. The idle animation pauses too,
+    /// so it sleeps (and wakes up) where it stopped.
+    static let napAfter: Double = 2 * 60
+    private var napStart: Double?
+    private var lastActivity = CACurrentMediaTime()
+    private var clock: Double { petStart ?? napStart ?? CACurrentMediaTime() }
     var isPetted: Bool { petStart != nil }
     private var wasRoaming = false
     private var roamStart = 0.0
@@ -70,6 +75,20 @@ final class StatusModel {
     private var preview: (mood: Mood, warning: Warning?, until: Double)?
     private var warning: Warning?
     private var lastWarningCheck = 0.0
+    /// Little moments: a stretch after an hour of Claude working, a yawn on the first idle look each morning.
+    enum Moment { case stretch, yawn }
+    private var moment: (kind: Moment, start: Double)?
+    private var workedFor = 0.0
+    private var lastFrame = CACurrentMediaTime()
+    static let stretchEvery: Double = 60 * 60
+    /// The "Stretch timer?" prompt: when it was shown, and when the countdown the user started ends.
+    private(set) var stretchOffer: Double?
+    private(set) var stretchEnds: Double?
+    static let offerFor: Double = 20          // seconds before an ignored prompt goes away
+    static let stretchCycle: Double = 30      // while a timer runs, the mascot stretches this often
+    var onAlert: (() -> Void)?                // asks the app to show the bar
+    var offeringStretch: Bool { stretchOffer != nil }
+    var stretchRunning: Bool { stretchEnds != nil }
     var onMoodChange: ((Mood) -> Void)?
 
     func tick() {
@@ -79,13 +98,16 @@ final class StatusModel {
         }
         let now = CACurrentMediaTime()
         if petStart != nil, now >= petEnd { endPet() }
+        updateMoments(now)
         guard now - lastPoll >= 0.4 else { return }
         lastPoll = now
         sessions = Self.readSessions()
+        let couldJump = canJump
         canJump = sessions.contains { Self.hostApp(of: $0.id) != nil }
+        if canJump != couldJump { wake() }          // a session started or ended
         var m = computeMood()
         if let p = preview {
-            if now < p.until { m = p.mood } else { preview = nil }
+            if now < p.until { m = p.mood } else { preview = nil; wake() }
         }
         setMood(m)
         if let p = preview {
@@ -95,6 +117,97 @@ final class StatusModel {
             lastWarningCheck = now
             warning = currentWarning()
         }
+        if preview == nil { updateNap(now) }
+    }
+
+    private func updateMoments(_ now: Double) {
+        let dt = now - lastFrame
+        lastFrame = now
+        guard dt < 5 else { return }                 // the Mac was asleep: don't count the gap
+        if mood == .working { workedFor += dt }
+        if let ends = stretchEnds, now >= ends {     // the user's countdown finished
+            stretchEnds = nil
+            moment = (.stretch, now)
+            onAlert?()
+        }
+        if let m = moment {
+            if now - m.start > (m.kind == .stretch ? stretchDuration : yawnDuration) { moment = nil }
+            return
+        }
+        if let offer = stretchOffer {
+            if mood != .idle {                       // Claude got busy: ask again at the next quiet moment
+                stretchOffer = nil
+                workedFor = Self.stretchEvery
+            } else if now - offer > Self.offerFor {  // ignored: wait another hour
+                stretchOffer = nil
+            }
+            return
+        }
+        guard mood == .idle, preview == nil, petStart == nil, napStart == nil else { return }
+        if workedFor >= Self.stretchEvery {
+            workedFor = 0
+            stretchOffer = now
+            onAlert?()
+        } else if Self.yawnDue() {
+            Self.markYawned()
+            moment = (.yawn, now)
+        }
+    }
+
+    private static func yawnDue() -> Bool {
+        let cal = Calendar.current
+        guard (6..<11).contains(cal.component(.hour, from: Date())) else { return false }
+        let today = cal.startOfDay(for: Date()).timeIntervalSince1970
+        return UserDefaults.standard.double(forKey: "yawnDay") != today
+    }
+
+    private static func markYawned() {
+        UserDefaults.standard.set(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970, forKey: "yawnDay")
+    }
+
+    /// The user's answer to the prompt. 0 minutes skips it.
+    func chooseStretch(minutes: Int) {
+        stretchOffer = nil
+        if minutes > 0 { stretchEnds = CACurrentMediaTime() + Double(minutes) * 60 }
+    }
+
+    func cancelStretchTimer() { stretchEnds = nil }
+
+    func previewStretchOffer() {
+        startPreview(.idle)
+        stretchOffer = CACurrentMediaTime()
+    }
+
+    /// m:ss, rounded up so the last second still shows.
+    static func mmss(_ seconds: Double) -> String {
+        let s = Int(max(0, seconds).rounded(.up))
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    func previewMoment(_ kind: Moment) {
+        startPreview(.idle)
+        moment = (kind, CACurrentMediaTime())
+    }
+
+    private func updateNap(_ now: Double) {
+        // A warning shown next to an open session matters more than a nap.
+        if canJump && warning != nil { wake(); return }
+        if mood == .idle, petStart == nil, napStart == nil, now - lastActivity >= Self.napAfter {
+            napStart = now
+        }
+    }
+
+    /// Something happened: wake up if dozing, and start counting the quiet time again.
+    func wake() {
+        lastActivity = CACurrentMediaTime()
+        guard let start = napStart else { return }
+        shiftClocks(by: lastActivity - start)
+        napStart = nil
+    }
+
+    func previewNap() {
+        startPreview(.idle)
+        napStart = CACurrentMediaTime()
     }
 
     private func currentWarning() -> Warning? {
@@ -114,6 +227,7 @@ final class StatusModel {
     private func setMood(_ m: Mood) {
         guard m != mood else { return }
         endPet()
+        wake()
         mood = m
         animStart = CACurrentMediaTime()
         onMoodChange?(m)
@@ -122,6 +236,7 @@ final class StatusModel {
     /// Called while a finger strokes the mascot. It stays happy for a moment after the last stroke.
     func pet() {
         guard mood == .idle else { return }          // not while it's busy
+        wake()
         let now = CACurrentMediaTime()
         if petStart == nil { petStart = now }
         petEnd = now + 2
@@ -130,12 +245,16 @@ final class StatusModel {
     /// Moves the animation clocks forward by the pause, so it carries on from where it stopped.
     private func endPet() {
         guard let start = petStart else { return }
-        let paused = CACurrentMediaTime() - start
+        shiftClocks(by: CACurrentMediaTime() - start)
+        petStart = nil
+        lastActivity = CACurrentMediaTime()
+    }
+
+    private func shiftClocks(by paused: Double) {
         animStart += paused
         roamStart += paused
         promptStart += paused
         promptUntil += paused
-        petStart = nil
     }
 
     private static func readSessions() -> [Session] {
@@ -192,7 +311,7 @@ final class StatusModel {
         let now = CACurrentMediaTime()
         if let c = detailCache, now - c.at < 1 { return (c.details, c.limits) }
         var d: SessionDetails?
-        let sid = focusSession?.id
+        let sid = (liveSession ?? focusSession)?.id
         if let sid {
             let meta = Self.dir.deletingLastPathComponent().appendingPathComponent("meta/\(sid)")
             if let lines = try? String(contentsOf: meta, encoding: .utf8).split(separator: "\n").map(String.init),
@@ -210,6 +329,7 @@ final class StatusModel {
     /// A tap on the full bar. While roaming, the first tap only shows "Tap to start Claude";
     /// a tap after that opens Claude.
     func tap() {
+        wake()
         guard roaming else { openClaude(); return }
         promptStart = CACurrentMediaTime()
         promptUntil = promptStart + 6
@@ -220,26 +340,52 @@ final class StatusModel {
     /// Brings the app running a Claude session to the front (Terminal, iTerm, VS Code, Claude...).
     /// With no session running, starts a new one in Terminal.
     func openClaude() {
-        // The session the bar is about comes first, then the others, newest first.
-        let focus = focusSession
-        let others = sessions.filter { $0.id != focus?.id }.sorted { $0.updated > $1.updated }
-        for s in (focus.map { [$0] } ?? []) + others {
-            if let app = Self.hostApp(of: s.id) {
-                app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
-                return
-            }
+        wake()
+        if let s = liveSession, let app = Self.hostApp(of: s.id) {
+            app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+            return
         }
         startSession()
     }
 
+    /// The running session the bar acts on: the one it is about, else the newest.
+    var liveSession: Session? {
+        let focus = focusSession
+        let others = sessions.filter { $0.id != focus?.id }.sorted { $0.updated > $1.updated }
+        return ((focus.map { [$0] } ?? []) + others).first { Self.hostApp(of: $0.id) != nil }
+    }
+
+    /// Types `/model x` or `/effort x` into a session's Terminal tab. `report` gets a line for the bar.
+    func send(_ choice: Choice, _ option: String, to sid: String, report: @escaping (String) -> Void) {
+        sessions = Self.readSessions()          // the state must be current before typing anything
+        guard let s = sessions.first(where: { $0.id == sid }), let app = Self.hostApp(of: sid),
+              let pid = Self.claudePid(of: sid) else { return report("That session has ended") }
+        // Only at the prompt: typing into a permission question could answer it.
+        guard s.state == "idle" || s.state == "done" else { return report("Claude is busy · try when it's done") }
+        guard app.bundleIdentifier == "com.apple.Terminal", let tty = TerminalTyper.tty(of: pid) else {
+            return report("Switching only works in Terminal")
+        }
+        let line = "/\(choice.rawValue) \(option)"
+        TerminalTyper.type(line, tty: tty) { error in report(error ?? "Sent \(line)") }
+    }
+
+    /// The Claude process of a session, or nil if it has exited. It is the first pid recorded
+    /// by the hook; the rest are its ancestors (shell, terminal app).
+    private static func claudePid(of sid: String) -> pid_t? {
+        let lines = metaLines(sid)
+        let first = (lines.count > 3 ? lines[3] : "").split(separator: " ").first.flatMap { pid_t($0) }
+        return first.flatMap { kill($0, 0) == 0 ? $0 : nil }
+    }
+
+    private static func metaLines(_ sid: String) -> [String] {
+        let meta = dir.deletingLastPathComponent().appendingPathComponent("meta/\(sid)")
+        return (try? String(contentsOf: meta, encoding: .utf8))?.components(separatedBy: "\n") ?? []
+    }
+
     /// The app hosting a session, or nil if that session's process has exited.
     private static func hostApp(of sid: String) -> NSRunningApplication? {
-        let meta = dir.deletingLastPathComponent().appendingPathComponent("meta/\(sid)")
-        let lines = (try? String(contentsOf: meta, encoding: .utf8))?
-            .components(separatedBy: "\n") ?? []
-        // The first pid is the Claude process; the rest are its ancestors (shell, terminal app).
-        let pids = (lines.count > 3 ? lines[3] : "").split(separator: " ").compactMap { pid_t($0) }
-        guard let claude = pids.first, kill(claude, 0) == 0 else { return nil }
+        guard let claude = claudePid(of: sid) else { return nil }
+        let lines = metaLines(sid)
         if let app = guiApp(above: claude) { return app }
         guard lines.count > 2, !lines[2].isEmpty else { return nil }
         return NSRunningApplication.runningApplications(withBundleIdentifier: lines[2]).first
@@ -257,7 +403,7 @@ final class StatusModel {
 
         let script = Self.dir.deletingLastPathComponent().appendingPathComponent("new-session.command")
         // Login + interactive shell so `claude` is on PATH; the window stays usable after it exits.
-        let body = "#!/bin/zsh -il\ncd ~\nclear\nclaude\nexec /bin/zsh -il\n"
+        let body = "#!/bin/zsh -il\ncd ~\nclear\nclaude\(Choice.launchFlags)\nexec /bin/zsh -il\n"
         do {
             try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
             try body.write(to: script, atomically: true, encoding: .utf8)
@@ -293,10 +439,42 @@ final class StatusModel {
 
     func scene() -> Scene {
         var s = moodScene()
+        // Stays put (no strolling) while a prompt, a timer or the end-of-timer stretch is on screen.
+        if s.mood == .idle && (stretchEnds != nil || stretchOffer != nil || moment?.kind == .stretch) { s.still = true }
+        if let start = napStart {
+            s.nap = CACurrentMediaTime() - start
+            if !s.roaming { s.title = "Napping"; s.subtitle = "Tap to wake Claude" }
+            return s
+        }
         if let start = petStart {
             s.pet = CACurrentMediaTime() - start
             if !s.roaming { s.title = "Hehe!"; s.subtitle = "Claude loves the pats" }
             return s                   // too happy to be tired or stressed
+        }
+        if let m = moment {
+            let elapsed = CACurrentMediaTime() - m.start
+            switch m.kind {
+            case .stretch:
+                s.stretch = elapsed
+                if !s.roaming { s.title = "Stretch break"; s.subtitle = "Rest your eyes and roll your shoulders" }
+            case .yawn:
+                s.yawn = elapsed
+                if !s.roaming { s.title = "Good morning"; s.subtitle = "Yawn... let's get going" }
+            }
+            return s
+        }
+        if stretchOffer != nil {
+            s.title = "Stretch timer?"; s.subtitle = ""; s.roaming = false
+            return s
+        }
+        if let ends = stretchEnds {
+            let left = Self.mmss(ends - CACurrentMediaTime())
+            if s.mood == .working { s.subtitle += " · stretch in \(left)" }
+            if s.mood == .idle {
+                s.title = "Stretch timer"; s.subtitle = "\(left) left"; s.roaming = false
+                let phase = CACurrentMediaTime().truncatingRemainder(dividingBy: Self.stretchCycle)
+                if phase < stretchDuration { s.stretch = phase }     // a stretch every cycle
+            }
         }
         guard let w = warning else { return s }
         s.health = w.health
@@ -391,7 +569,7 @@ enum SpinnerVerbs {
 final class MascotView: NSView {
     let model: StatusModel
     let compact: Bool
-    var onTap: (() -> Void)?
+    var onTap: ((CGFloat) -> Void)?     // x position of the tap
     var onLongPress: (() -> Void)?
     private var swallowTap = false
     /// The current finger drag: the furthest point in this direction, and how often it has turned.
@@ -399,14 +577,43 @@ final class MascotView: NSView {
     /// Full bar only: show model / context / usage instead of the status text.
     var detailsUntil: Double = 0
     var showingDetails: Bool { !compact && CACurrentMediaTime() < detailsUntil }
-    func toggleDetails() { detailsUntil = showingDetails ? 0 : CACurrentMediaTime() + 15 }
+    func toggleDetails() { picker = nil; notice = nil; detailsUntil = showingDetails ? 0 : CACurrentMediaTime() + 15 }
+    private var picker: Picker?
+    private var notice: (text: String, until: Double)?
+
+    /// A tap in the details view: the model opens the picker, anywhere else goes to Claude.
+    func detailsTap(_ x: CGFloat) {
+        detailsUntil = CACurrentMediaTime() + 15
+        notice = nil
+        if var p = picker {
+            let hit = p.buttons(in: bounds, details: model.detailInfo().0).first { x >= $0.rect.minX && x < $0.rect.maxX }
+            switch hit?.action {
+            case .page(let page): p.page = page; picker = p
+            case .choose(let option):
+                picker = nil
+                if let sid = p.sessionId, let option {
+                    model.send(p.page, option, to: sid) { [weak self] text in
+                        self?.notice = (text, CACurrentMediaTime() + 4)
+                    }
+                } else {
+                    p.page.next = option
+                }
+            case .close: picker = nil
+            case nil: break
+            }
+            return
+        }
+        let live = model.liveSession
+        let chipEnd: CGFloat = live == nil ? DetailsRenderer.nextChipEnd : DetailsRenderer.modelChipEnd
+        if x >= 54 && x < chipEnd { picker = Picker(sessionId: live?.id) } else { model.openClaude() }
+    }
 
     init(model: StatusModel, compact: Bool) {
         self.model = model
         self.compact = compact
         super.init(frame: NSRect(x: 0, y: 0, width: compact ? 46 : MascotView.fullWidth, height: 30))
         wantsLayer = true
-        let tap = NSClickGestureRecognizer(target: self, action: #selector(tapped))
+        let tap = NSClickGestureRecognizer(target: self, action: #selector(tapped(_:)))
         tap.allowedTouchTypes = .direct
         addGestureRecognizer(tap)
         let hold = NSPressGestureRecognizer(target: self, action: #selector(held(_:)))
@@ -425,15 +632,16 @@ final class MascotView: NSView {
     override var isFlipped: Bool { true }
     override var intrinsicContentSize: NSSize { NSSize(width: compact ? 46 : Self.fullWidth, height: 30) }
 
-    @objc private func tapped() {
+    @objc private func tapped(_ g: NSClickGestureRecognizer) {
         if swallowTap { swallowTap = false; return }   // the finger-up that ended a long press
-        onTap?()
+        onTap?(g.location(in: self).x)
     }
 
     @objc private func held(_ g: NSPressGestureRecognizer) {
         guard g.state == .began, !model.isPetted else { return }
         swallowTap = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.swallowTap = false }
+        model.wake()
         onLongPress?()
     }
 
@@ -467,9 +675,19 @@ final class MascotView: NSView {
         if showingDetails {
             Renderer.draw(c, bounds: NSRect(x: 0, y: 0, width: 46, height: bounds.height), scene: model.scene(), compact: true)
             let (d, l) = model.detailInfo()
-            DetailsRenderer.draw(c, bounds: bounds, details: d, limits: l)
+            if let n = notice, CACurrentMediaTime() < n.until {
+                DetailsRenderer.drawNotice(bounds: bounds, n.text)
+            } else if let picker {
+                picker.draw(c, bounds: bounds, details: d)
+            } else if model.liveSession == nil {
+                DetailsRenderer.drawNext(c, bounds: bounds)
+            } else {
+                DetailsRenderer.draw(c, bounds: bounds, details: d, limits: l)
+            }
         } else {
+            picker = nil
             Renderer.draw(c, bounds: bounds, scene: model.scene(), compact: compact)
+            if !compact && model.offeringStretch { StretchPrompt.draw(c, bounds: bounds) }
         }
     }
 }
@@ -486,6 +704,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     var statusItem: NSStatusItem!
     var timer: Timer?
     let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    let stretchItem = NSMenuItem(title: "Cancel stretch timer", action: nil, keyEquivalent: "")
 
     /// Bring the bar back on every status change, Ready included. Closing it with ✕ (or Hide)
     /// still works: it stays closed until Claude's status next changes.
@@ -540,15 +759,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
         trayView = MascotView(model: model, compact: true)
         trayView.widthAnchor.constraint(equalToConstant: 46).isActive = true
         // Tap: jump to the running Claude session, or start one. Long-press: model / context / usage details.
-        trayView.onTap = { [weak self] in self?.showBar() }
+        trayView.onTap = { [weak self] _ in self?.showBar() }
         trayView.onLongPress = { [weak self] in
             self?.showBar()
             self?.fullView.detailsUntil = CACurrentMediaTime() + 15
         }
-        fullView.onTap = { [weak self] in
+        fullView.onTap = { [weak self] x in
             guard let self else { return }
-            // From the details view a tap goes straight to Claude.
-            if self.fullView.showingDetails { self.model.openClaude() } else { self.model.tap() }
+            if self.fullView.showingDetails {
+                self.fullView.detailsTap(x)
+            } else if self.model.offeringStretch, let minutes = StretchPrompt.minutes(at: x, in: self.fullView.bounds) {
+                self.model.chooseStretch(minutes: minutes)
+            } else {
+                self.model.tap()
+            }
         }
         fullView.onLongPress = { [weak self] in self?.fullView.toggleDetails() }
 
@@ -568,6 +792,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
             guard let self, !self.steppedAside else { return }
             if self.keepShowing || (self.autoShow && m != .idle) { self.showBar() }
         }
+        model.onAlert = { [weak self] in self?.showBar() }
         model.tick()
         showBar()
 
@@ -618,6 +843,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
         auto.target = self
         auto.state = autoShow ? .on : .off
         menu.addItem(.separator())
+        stretchItem.action = #selector(cancelStretch)
+        stretchItem.target = self
+        menu.addItem(stretchItem)
         let previewMenu = NSMenu()
         for (title, m) in [("Idle", Mood.idle), ("Building", .working), ("Needs you", .waiting), ("Done + flag", .done)] {
             let it = previewMenu.addItem(withTitle: title, action: #selector(preview(_:)), keyEquivalent: "")
@@ -630,6 +858,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
             it.target = self
             it.representedObject = w
         }
+        previewMenu.addItem(withTitle: "Napping", action: #selector(previewNap), keyEquivalent: "").target = self
+        for (title, kind) in [("Stretch break", StatusModel.Moment.stretch), ("Morning yawn", .yawn)] {
+            let it = previewMenu.addItem(withTitle: title, action: #selector(previewMoment(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = kind == .stretch ? "stretch" : "yawn"
+        }
+        let offer = previewMenu.addItem(withTitle: "Stretch timer prompt", action: #selector(previewMoment(_:)), keyEquivalent: "")
+        offer.target = self
+        offer.representedObject = "offer"
         let p = menu.addItem(withTitle: "Preview animation", action: nil, keyEquivalent: "")
         menu.setSubmenu(previewMenu, for: p)
         menu.addItem(.separator())
@@ -638,6 +875,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        stretchItem.isHidden = !model.stretchRunning
         let s = model.scene()
         statusLine.title = "\(s.title.trimmingCharacters(in: CharacterSet(charactersIn: "."))) — \(s.subtitle)"
     }
@@ -651,6 +889,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
         guard let raw = sender.representedObject as? String, let m = Mood(rawValue: raw) else { return }
         showBar()
         model.startPreview(m)
+    }
+
+    @objc private func cancelStretch() { model.cancelStretchTimer() }
+
+    @objc private func previewMoment(_ sender: NSMenuItem) {
+        showBar()
+        switch sender.representedObject as? String {
+        case "offer": model.previewStretchOffer()
+        case "yawn": model.previewMoment(.yawn)
+        default: model.previewMoment(.stretch)
+        }
+    }
+
+    @objc private func previewNap() {
+        showBar()
+        model.previewNap()
     }
 
     @objc private func previewWarning(_ sender: NSMenuItem) {

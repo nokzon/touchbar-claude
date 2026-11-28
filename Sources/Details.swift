@@ -159,6 +159,24 @@ enum DetailsRenderer {
     private static let labelFont = NSFont.systemFont(ofSize: 9, weight: .semibold)
     private static let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
 
+    static let modelChipEnd: CGFloat = 162      // where the tappable areas end
+    static let nextChipEnd: CGFloat = 260
+
+    static func drawNotice(bounds: CGRect, _ s: String) {
+        text(s, NSFont.systemFont(ofSize: 12, weight: .medium), .white, at: NSPoint(x: bounds.minX + 54, y: bounds.midY - 8))
+    }
+
+    /// With no session running: what the next one will start with.
+    static func drawNext(_ c: CGContext, bounds: CGRect) {
+        let x = bounds.minX + 54
+        text("NEXT SESSION ▾", labelFont, NSColor(white: 1, alpha: 0.45), at: NSPoint(x: x, y: bounds.minY + 1))
+        let model = Choice.model.next.map(Choice.title) ?? "Default model"
+        let effort = Choice.effort.next.map { Choice.title($0) + " effort" } ?? "default effort"
+        text(model + " · " + effort, valueFont, .white, at: NSPoint(x: x, y: bounds.minY + 13))
+        text("Tap here to start Claude", NSFont.systemFont(ofSize: 12), NSColor(white: 1, alpha: 0.6),
+             at: NSPoint(x: bounds.minX + nextChipEnd + 20, y: bounds.midY - 8))
+    }
+
     static func draw(_ c: CGContext, bounds: CGRect, details d: SessionDetails?, limits l: Limits?) {
         var x = bounds.minX + 54
         guard let d else {
@@ -175,7 +193,7 @@ enum DetailsRenderer {
         }
         let vy = bounds.minY + 13
 
-        chip(d.effort.isEmpty ? "MODEL" : "MODEL · \(d.effort.uppercased())", width: 108) { x in
+        chip(d.effort.isEmpty ? "MODEL ▾" : "MODEL · \(d.effort.uppercased()) ▾", width: 108) { x in
             text(d.modelName, valueFont, .white, at: NSPoint(x: x, y: vy))
         }
 

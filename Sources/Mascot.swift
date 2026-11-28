@@ -21,6 +21,7 @@ struct Pose {
     var legSY: [CGFloat] = [1, 1, 1, 1]
     var legLift: [CGFloat] = [0, 0, 0, 0]
     var rArmHidden = false
+    var mouth: CGFloat = 0        // yawning: 0 = closed, 1 = wide open
     var rArmReach: CGFloat = 0    // extra arm length out to the right (the arm stays rooted in the body)
     var legUpperDX: CGFloat = 0
     var legHipPivot = false       // walking: legs swing from the hip (and get clipped by the ground)   // two-part legs: feet stay planted, the upper part sways with the body
@@ -35,6 +36,10 @@ struct Scene {
     var slideFrom: CGFloat = 0   // where it was roaming when tapped; it dashes home from there
     var health: Health = .fine
     var pet: Double?       // seconds since petting began; nil when nobody is petting
+    var nap: Double?       // seconds since it dozed off; nil when awake
+    var stretch: Double?   // seconds into a stretch; nil otherwise
+    var still = false      // stays put at home: a timer is running, so no strolling
+    var yawn: Double?      // seconds into a morning yawn; nil otherwise
 }
 
 // MARK: - Geometry & palette
@@ -232,6 +237,49 @@ private func applyHealth(_ p: inout Pose, _ health: Health, _ t: Double) {
         p.bodyDX += CGFloat(1.5 * sin(t * 50))
         p.eyeDX += fmod(t, 1.0) < 0.5 ? -3 : 3
     }
+}
+
+let stretchDuration = 3.2
+let yawnDuration = 2.6
+
+/// Stretch break: arms up, body tall, a little sway, then back down.
+private func stretchPose(_ t: Double) -> Pose {
+    var p = Pose()
+    let k = CGFloat(power2Out(seg(t, 0, 0.9)) * (1 - power2InOut(seg(t, 2.3, 3.0))))
+    p.eyes = .happy
+    p.bodySY = 1 + 0.06 * k
+    p.bodyDY = -4 * k
+    p.bodyRot = 3 * k * CGFloat(sin(t * 6))
+    p.lArm.rot = 80 * k
+    p.rArm.rot = -80 * k
+    return p
+}
+
+/// Morning yawn: eyes nearly shut, the mouth opens wide, the arms reach up and back down.
+private func yawnPose(_ t: Double) -> Pose {
+    var p = Pose()
+    let mouthOpen = CGFloat(sin(.pi * seg(t, 0.2, 2.0)))
+    let reach = CGFloat(sin(.pi * seg(t, 0.1, 2.2)))
+    p.blink = 0.12
+    p.eyeDY = 2
+    p.mouth = mouthOpen
+    p.bodyDY = -2 * reach
+    p.bodyRot = -3 * reach
+    p.lArm.rot = 35 * reach
+    p.rArm.rot = -35 * reach
+    return p
+}
+
+/// Dozing after a quiet spell: eyes shut, slumped, breathing slowly.
+private func napPose(_ t: Double) -> Pose {
+    var p = Pose()
+    breathe(&p, t * 0.6)
+    p.blink = 0.25
+    p.eyeDY = 3
+    p.bodySY *= 0.94
+    p.bodyDY = 2
+    p.lArm.dy += 5; p.rArm.dy += 5
+    return p
 }
 
 /// Being petted: ^ ^ eyes, arms in the air and little jumps for joy.
@@ -452,8 +500,9 @@ enum Renderer {
         switch sc.mood {
         case .idle:
             var p: Pose
-            if sc.health == .tired {            // too tired to stroll: stays put and dozes
+            if sc.still || sc.health == .tired {  // stays put: a timer is running, or too tired to stroll
                 p = Pose()
+                p.gx = sc.still ? idleX : 0       // where it was standing, not back at home
                 breathe(&p, t * 0.6)
             } else if sc.roaming && !compact {
                 let stops = 6
@@ -468,11 +517,33 @@ enum Renderer {
             }
             if compact { p.gx = 0 }
             idleX = p.gx
+            if let nt = sc.nap {
+                let x = p.gx
+                p = napPose(nt)
+                p.gx = x                   // dozes off where it was standing
+                drawMascot(c, p)
+                drawSnooze(c, nt, x: x)
+                return
+            }
             if let pt = sc.pet {
                 let x = p.gx
                 p = happyPose(pt)
                 p.gx = x                   // jumps where it was standing
                 drawMascot(c, p, bodyProp: drawRibbon)
+                return
+            }
+            if let st = sc.stretch {
+                let x = p.gx
+                p = stretchPose(st)
+                p.gx = x
+                drawMascot(c, p)
+                return
+            }
+            if let yt = sc.yawn {
+                let x = p.gx
+                p = yawnPose(yt)
+                p.gx = x
+                drawMascot(c, p)
                 return
             }
             applyHealth(&p, sc.health, t)
@@ -601,6 +672,11 @@ enum Renderer {
                 c.fill(CGRect(x: cx - 12, y: hy + 6, width: 6, height: 6))
                 c.fill(CGRect(x: cx + 6, y: hy + 6, width: 6, height: 6))
             }
+        }
+        if p.mouth > 0 {
+            // Yawning: a dark mouth under the eyes that opens wide and shuts again.
+            let w: CGFloat = 6 + 4 * p.mouth, h = 1 + 9 * p.mouth
+            c.fill(CGRect(x: G.body.midX - w / 2, y: 27, width: w, height: h))
         }
     }
 
