@@ -108,6 +108,10 @@ The first time you change the model or effort from the bar, macOS asks whether T
 
 <img width="307" height="233" alt="image" src="https://github.com/user-attachments/assets/55aa0922-937b-41c1-bb30-450b2f58749b" />
 
+## Credits
+
+Touchbar Claude started as [nokzon/touchbar-claude](https://github.com/nokzon/touchbar-claude). This version adds a clickable start for Claude sessions, model and effort choices from the bar, napping, a stretch timer, a morning yawn, and more.
+
 ## Uninstall
 ```bash
 ./install.sh --uninstall
