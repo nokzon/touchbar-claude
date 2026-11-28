@@ -53,14 +53,28 @@ final class StatusModel {
     private(set) var animStart = CACurrentMediaTime()
     private(set) var sessions: [Session] = []
     private var lastPoll = 0.0
+    /// False when a tap would start a new session instead of jumping to one.
+    private var canJump = false
+    /// With no session the mascot roams without text; a tap shows the text for a few seconds.
+    var roaming: Bool { mood == .idle && !canJump && CACurrentMediaTime() >= promptUntil }
+    private var wasRoaming = false
+    private var roamStart = 0.0
+    private var promptStart = 0.0
+    private var promptUntil = 0.0
+    private var slideFrom: CGFloat = 0
     private var preview: (mood: Mood, until: Double)?
     var onMoodChange: ((Mood) -> Void)?
 
     func tick() {
+        defer {
+            if roaming && !wasRoaming { roamStart = CACurrentMediaTime() }   // always set off from home
+            wasRoaming = roaming
+        }
         let now = CACurrentMediaTime()
         guard now - lastPoll >= 0.4 else { return }
         lastPoll = now
         sessions = Self.readSessions()
+        canJump = sessions.contains { Self.hostApp(of: $0.id) != nil }
         var m = computeMood()
         if let p = preview {
             if now < p.until { m = p.mood } else { preview = nil }
@@ -151,24 +165,69 @@ final class StatusModel {
 
     // MARK: Jump to the session (tap)
 
-    /// Brings the app running the focus session to the front (Terminal, iTerm, VS Code, Claude...).
-    func activateFocusApp() {
-        var target: NSRunningApplication?
-        if let sid = focusSession?.id {
-            let meta = Self.dir.deletingLastPathComponent().appendingPathComponent("meta/\(sid)")
-            let lines = (try? String(contentsOf: meta, encoding: .utf8))?
-                .components(separatedBy: "\n") ?? []
-            // Walk up from the first ancestor still alive to the GUI app that owns it.
-            let pids = (lines.count > 3 ? lines[3] : "").split(separator: " ").compactMap { pid_t($0) }
-            if let live = pids.first(where: { kill($0, 0) == 0 }) { target = Self.guiApp(above: live) }
-            if target == nil, lines.count > 2, !lines[2].isEmpty {
-                target = NSRunningApplication.runningApplications(withBundleIdentifier: lines[2]).first
+    /// A tap on the full bar. While roaming, the first tap only shows "Tap to start Claude";
+    /// a tap after that opens Claude.
+    func tap() {
+        guard roaming else { openClaude(); return }
+        promptStart = CACurrentMediaTime()
+        promptUntil = promptStart + 6
+        slideFrom = Renderer.roamX
+        wasRoaming = false
+    }
+
+    /// Brings the app running a Claude session to the front (Terminal, iTerm, VS Code, Claude...).
+    /// With no session running, starts a new one in Terminal.
+    func openClaude() {
+        // The session the bar is about comes first, then the others, newest first.
+        let focus = focusSession
+        let others = sessions.filter { $0.id != focus?.id }.sorted { $0.updated > $1.updated }
+        for s in (focus.map { [$0] } ?? []) + others {
+            if let app = Self.hostApp(of: s.id) {
+                app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+                return
             }
         }
-        if target == nil {   // no session info: fall back to the Claude desktop app if it's open
-            target = NSRunningApplication.runningApplications(withBundleIdentifier: "com.anthropic.claudefordesktop").first
+        startSession()
+    }
+
+    /// The app hosting a session, or nil if that session's process has exited.
+    private static func hostApp(of sid: String) -> NSRunningApplication? {
+        let meta = dir.deletingLastPathComponent().appendingPathComponent("meta/\(sid)")
+        let lines = (try? String(contentsOf: meta, encoding: .utf8))?
+            .components(separatedBy: "\n") ?? []
+        // The first pid is the Claude process; the rest are its ancestors (shell, terminal app).
+        let pids = (lines.count > 3 ? lines[3] : "").split(separator: " ").compactMap { pid_t($0) }
+        guard let claude = pids.first, kill(claude, 0) == 0 else { return nil }
+        if let app = guiApp(above: claude) { return app }
+        guard lines.count > 2, !lines[2].isEmpty else { return nil }
+        return NSRunningApplication.runningApplications(withBundleIdentifier: lines[2]).first
+    }
+
+    private var lastStart = -Double.infinity
+
+    /// Opens a new Terminal window in the home folder and runs `claude`. Uses a .command
+    /// file, so macOS doesn't ask for Automation permission.
+    private func startSession() {
+        // A new session takes a moment to report in; don't open a second window meanwhile.
+        let now = CACurrentMediaTime()
+        guard now - lastStart >= 5 else { return }
+        lastStart = now
+
+        let script = Self.dir.deletingLastPathComponent().appendingPathComponent("new-session.command")
+        // Login + interactive shell so `claude` is on PATH; the window stays usable after it exits.
+        let body = "#!/bin/zsh -il\ncd ~\nclear\nclaude\nexec /bin/zsh -il\n"
+        do {
+            try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try body.write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        } catch {
+            NSLog("Touchbar Claude: couldn't write %@: %@", script.path, error.localizedDescription)
+            return
         }
-        target?.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+        guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return }
+        NSWorkspace.shared.open([script], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            if let error { NSLog("Touchbar Claude: couldn't open Terminal: %@", error.localizedDescription) }
+        }
     }
 
     private static func guiApp(above pid: pid_t) -> NSRunningApplication? {
@@ -196,7 +255,12 @@ final class StatusModel {
         let isPreview = preview != nil
         switch mood {
         case .idle:
-            return Scene(mood: .idle, t: t, title: "Ready", subtitle: "Waiting for your prompt")
+            if canJump { return Scene(mood: .idle, t: t, title: "Ready", subtitle: "Waiting for your prompt") }
+            let clock = CACurrentMediaTime()
+            let prompting = clock < promptUntil
+            return Scene(mood: .idle, t: clock - (prompting ? promptStart : roamStart), title: "Ready",
+                         subtitle: "Tap to start Claude", roaming: !prompting,
+                         slideFrom: prompting ? slideFrom : 0)
         case .waiting:
             let n = waiting.count
             return Scene(mood: .waiting, t: t, title: "Needs you",
@@ -380,13 +444,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
         fullView.widthAnchor.constraint(equalToConstant: MascotView.fullWidth).isActive = true
         trayView = MascotView(model: model, compact: true)
         trayView.widthAnchor.constraint(equalToConstant: 46).isActive = true
-        // Tap: jump to the app running Claude. Long-press: model / context / usage details.
+        // Tap: jump to the running Claude session, or start one. Long-press: model / context / usage details.
         trayView.onTap = { [weak self] in self?.showBar() }
         trayView.onLongPress = { [weak self] in
             self?.showBar()
             self?.fullView.detailsUntil = CACurrentMediaTime() + 15
         }
-        fullView.onTap = { [weak self] in self?.model.activateFocusApp() }
+        fullView.onTap = { [weak self] in
+            guard let self else { return }
+            // From the details view a tap goes straight to Claude.
+            if self.fullView.showingDetails { self.model.openClaude() } else { self.model.tap() }
+        }
         fullView.onLongPress = { [weak self] in self?.fullView.toggleDetails() }
 
         bar = NSTouchBar()

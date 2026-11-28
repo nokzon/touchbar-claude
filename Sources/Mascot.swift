@@ -29,6 +29,8 @@ struct Scene {
     var t: Double          // seconds since this mood started
     var title: String
     var subtitle: String
+    var roaming = false    // no session: just the mascot, wandering the whole bar
+    var slideFrom: CGFloat = 0   // where it was roaming when tapped; it dashes home from there
 }
 
 // MARK: - Geometry & palette
@@ -128,20 +130,22 @@ private let lookDuration = 3.4     // lean L, lean R, settle, look down, hop
 private let walkDuration = 1.5
 private let restDuration = 0.6      // short pause before looking around (walk starts at 4 s)
 private let restAfterWalk = 1.8    // breathe and blink after arriving
-private let idleHalf = restDuration + lookDuration + walkDuration + restAfterWalk
-private let idleLoop = idleHalf * 2
 
 private func power3InOut(_ x: Double) -> Double { x < 0.5 ? 4 * x * x * x : 1 - pow(-2 * x + 2, 3) / 2 }
 private func sineOut(_ x: Double) -> Double { sin(x * .pi / 2) }
 private func power1InOut(_ x: Double) -> Double { power2InOut(x) * 0.5 + x * 0.5 }
 
-private func idlePose(_ t: Double) -> Pose {
+/// `stops` walks to the right, each followed by a look around, then the same number back.
+private func idlePose(_ t: Double, distance: CGFloat = walkDistance, walkTime: Double = walkDuration,
+                      stops: Int = 1) -> Pose {
     var p = Pose()
-    let lt = fmod(t, idleLoop)
-    let goingBack = lt >= idleHalf
-    let u = goingBack ? lt - idleHalf : lt        // time within this half
+    let half = restDuration + lookDuration + walkTime + restAfterWalk
+    let lt = fmod(t, half * Double(stops * 2))
+    let step = min(Int(lt / half), stops * 2 - 1)
+    let goingBack = step >= stops
+    let u = lt - Double(step) * half              // time within this half
     let dir: CGFloat = goingBack ? -1 : 1         // walking direction for this half
-    let startX: CGFloat = goingBack ? walkDistance : 0
+    let startX = CGFloat(goingBack ? stops * 2 - step : step) * distance
     p.gx = startX
 
     if u < restDuration {
@@ -179,12 +183,12 @@ private func idlePose(_ t: Double) -> Pose {
     }
     // Crouched scuttle: the body stays low, legs swing from the hip in alternating pairs.
     let w = v - lookDuration
-    if w < walkDuration {
-        let prog = power1InOut(seg(w, 0, walkDuration - 0.2))
-        p.gx += dir * (6 + (walkDistance - 6) * CGFloat(prog))
+    if w < walkTime {
+        let prog = power1InOut(seg(w, 0, walkTime - 0.2))
+        p.gx += dir * (6 + (distance - 6) * CGFloat(prog))
         p.legHipPivot = true
         let phase = w / 0.26 * 2 * .pi
-        let standUp = seg(w, walkDuration - 0.2, walkDuration)
+        let standUp = seg(w, walkTime - 0.2, walkTime)
         let low = 9 * (1 - power2Out(standUp))
         p.bodyDY = CGFloat(low + 1.5 * abs(sin(phase)) * (1 - standUp))
         p.eyeDX = 4 * dir
@@ -197,8 +201,8 @@ private func idlePose(_ t: Double) -> Pose {
         }
         p.lArm.dy = CGFloat(-2 * (1 - standUp)); p.rArm.dy = p.lArm.dy
     } else {
-        p.gx = startX + dir * walkDistance
-        breathe(&p, w - walkDuration)
+        p.gx = startX + dir * distance
+        breathe(&p, w - walkTime)
         blink(&p, t)
     }
     return p
@@ -368,6 +372,9 @@ private func viewTop(_ sc: Scene) -> CGFloat {
 // MARK: - Renderer
 
 enum Renderer {
+    /// How far from home the roaming mascot was last drawn (mascot units).
+    private(set) static var roamX: CGFloat = 0
+
     /// Draws the scene into `bounds` of a flipped view.
     static func draw(_ c: CGContext, bounds: CGRect, scene: Scene, compact: Bool) {
         let s0 = bounds.height / G.viewUnits
@@ -376,7 +383,10 @@ enum Renderer {
         let keepCentre = G.body.midX * (s0 - s)     // zooming keeps the mascot centred where it was
         let x0: CGFloat = (compact ? bounds.minX + 2 + 10 * s0 : bounds.minX + 8 + 22 * s0) + keepCentre
 
-        if !compact {
+        // Room to the right of home, leaving space for the mascot itself.
+        let roamSpan = max(0, (bounds.maxX - x0) / s - 125)
+
+        if !compact && !scene.roaming && !(scene.slideFrom > 0 && scene.t < slideTime) {
             drawText(scene, x: bounds.minX + 8 + 22 * s0 + 206 * s0 + 10, maxX: bounds.maxX - 6, bounds: bounds)
         }
 
@@ -384,15 +394,28 @@ enum Renderer {
         c.clip(to: bounds)
         c.translateBy(x: x0, y: bounds.minY - top * s)
         c.scaleBy(x: s, y: s)
-        drawStage(c, scene, compact: compact)
+        drawStage(c, scene, compact: compact, roamSpan: roamSpan)
         c.restoreGState()
     }
 
-    private static func drawStage(_ c: CGContext, _ sc: Scene, compact: Bool) {
+    private static let slideTime = 0.4
+
+    private static func drawStage(_ c: CGContext, _ sc: Scene, compact: Bool, roamSpan: CGFloat) {
         let t = sc.t
         switch sc.mood {
         case .idle:
-            var p = idlePose(t)
+            var p: Pose
+            if sc.roaming && !compact {
+                let stops = 6
+                let distance = roamSpan / CGFloat(stops)
+                // Same walking speed as the short stroll next to the text.
+                let walkTime = max(walkDuration, Double(distance / walkDistance) * walkDuration)
+                p = idlePose(t, distance: distance, walkTime: walkTime, stops: stops)
+                roamX = p.gx
+            } else {
+                p = idlePose(t)
+                if sc.slideFrom > 0 { p.gx += sc.slideFrom * CGFloat(1 - power2Out(seg(t, 0, slideTime))) }
+            }
             if compact { p.gx = 0 }
             drawMascot(c, p)
 
