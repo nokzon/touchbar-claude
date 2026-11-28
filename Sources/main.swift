@@ -56,7 +56,12 @@ final class StatusModel {
     /// False when a tap would start a new session instead of jumping to one.
     private var canJump = false
     /// With no session the mascot roams without text; a tap shows the text for a few seconds.
-    var roaming: Bool { mood == .idle && !canJump && CACurrentMediaTime() >= promptUntil }
+    var roaming: Bool { mood == .idle && !canJump && clock >= promptUntil }
+    /// While the mascot is being petted the idle animation is paused, so it stays under your finger.
+    private var petStart: Double?
+    private var petEnd = 0.0
+    private var clock: Double { petStart ?? CACurrentMediaTime() }
+    var isPetted: Bool { petStart != nil }
     private var wasRoaming = false
     private var roamStart = 0.0
     private var promptStart = 0.0
@@ -73,6 +78,7 @@ final class StatusModel {
             wasRoaming = roaming
         }
         let now = CACurrentMediaTime()
+        if petStart != nil, now >= petEnd { endPet() }
         guard now - lastPoll >= 0.4 else { return }
         lastPoll = now
         sessions = Self.readSessions()
@@ -107,9 +113,29 @@ final class StatusModel {
 
     private func setMood(_ m: Mood) {
         guard m != mood else { return }
+        endPet()
         mood = m
         animStart = CACurrentMediaTime()
         onMoodChange?(m)
+    }
+
+    /// Called while a finger strokes the mascot. It stays happy for a moment after the last stroke.
+    func pet() {
+        guard mood == .idle else { return }          // not while it's busy
+        let now = CACurrentMediaTime()
+        if petStart == nil { petStart = now }
+        petEnd = now + 2
+    }
+
+    /// Moves the animation clocks forward by the pause, so it carries on from where it stopped.
+    private func endPet() {
+        guard let start = petStart else { return }
+        let paused = CACurrentMediaTime() - start
+        animStart += paused
+        roamStart += paused
+        promptStart += paused
+        promptUntil += paused
+        petStart = nil
     }
 
     private static func readSessions() -> [Session] {
@@ -267,6 +293,11 @@ final class StatusModel {
 
     func scene() -> Scene {
         var s = moodScene()
+        if let start = petStart {
+            s.pet = CACurrentMediaTime() - start
+            if !s.roaming { s.title = "Hehe!"; s.subtitle = "Claude loves the pats" }
+            return s                   // too happy to be tired or stressed
+        }
         guard let w = warning else { return s }
         s.health = w.health
         switch s.mood {
@@ -283,13 +314,12 @@ final class StatusModel {
     }
 
     private func moodScene() -> Scene {
-        let t = CACurrentMediaTime() - animStart
+        let t = clock - animStart
         let now = Date().timeIntervalSince1970
         let isPreview = preview != nil
         switch mood {
         case .idle:
             if canJump { return Scene(mood: .idle, t: t, title: "Ready", subtitle: "Waiting for your prompt") }
-            let clock = CACurrentMediaTime()
             let prompting = clock < promptUntil
             return Scene(mood: .idle, t: clock - (prompting ? promptStart : roamStart), title: "Ready",
                          subtitle: "Tap to start Claude", roaming: !prompting,
@@ -364,6 +394,8 @@ final class MascotView: NSView {
     var onTap: (() -> Void)?
     var onLongPress: (() -> Void)?
     private var swallowTap = false
+    /// The current finger drag: the furthest point in this direction, and how often it has turned.
+    private var stroke = (edge: CGFloat(0), direction: CGFloat(0), turns: 0)
     /// Full bar only: show model / context / usage instead of the status text.
     var detailsUntil: Double = 0
     var showingDetails: Bool { !compact && CACurrentMediaTime() < detailsUntil }
@@ -381,6 +413,11 @@ final class MascotView: NSView {
         hold.allowedTouchTypes = .direct
         hold.minimumPressDuration = 0.45
         addGestureRecognizer(hold)
+        if !compact {
+            let pan = NSPanGestureRecognizer(target: self, action: #selector(stroked(_:)))
+            pan.allowedTouchTypes = .direct
+            addGestureRecognizer(pan)
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -394,10 +431,35 @@ final class MascotView: NSView {
     }
 
     @objc private func held(_ g: NSPressGestureRecognizer) {
-        guard g.state == .began else { return }
+        guard g.state == .began, !model.isPetted else { return }
         swallowTap = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.swallowTap = false }
         onLongPress?()
+    }
+
+    /// Petting: drag a finger back and forth over the mascot.
+    @objc private func stroked(_ g: NSPanGestureRecognizer) {
+        let x = g.location(in: self).x
+        switch g.state {
+        case .began:
+            stroke = (x, 0, 0)
+            swallowTap = true              // a stroke is not a tap
+        case .changed:
+            let moved = x - stroke.edge
+            if stroke.direction == 0 {
+                if abs(moved) > 5 { stroke = (x, moved > 0 ? 1 : -1, 0) }
+            } else if moved * stroke.direction > 0 {
+                stroke.edge = x
+            } else if abs(moved) > 5 {
+                stroke = (x, -stroke.direction, stroke.turns + 1)
+            }
+            // Two turns (there, back and there again), close to the mascot.
+            if stroke.turns >= 2, !showingDetails, abs(x - Renderer.mascotCentre) < 45 { model.pet() }
+        case .ended, .cancelled, .failed:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.swallowTap = false }
+        default:
+            break
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {

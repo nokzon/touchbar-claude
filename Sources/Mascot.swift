@@ -34,6 +34,7 @@ struct Scene {
     var roaming = false    // no session: just the mascot, wandering the whole bar
     var slideFrom: CGFloat = 0   // where it was roaming when tapped; it dashes home from there
     var health: Health = .fine
+    var pet: Double?       // seconds since petting began; nil when nobody is petting
 }
 
 // MARK: - Geometry & palette
@@ -76,6 +77,8 @@ private enum C {
     static let flagDark = rgb(0x4A4A4A)   // visible on the black Touch Bar
     static let paper = rgb(0xF4F1EA)
     static let sweat = rgb(0x6FB7E8)
+    static let ribbon = rgb(0xF06A9B)
+    static let ribbonKnot = rgb(0xC93D72)
     static let confetti: [CGColor] = [0xD97757, 0xF2C14E, 0x6FB7E8, 0x8BD17C, 0xE86FA8, 0xF4F1EA].map(rgb)
 }
 
@@ -229,6 +232,23 @@ private func applyHealth(_ p: inout Pose, _ health: Health, _ t: Double) {
         p.bodyDX += CGFloat(1.5 * sin(t * 50))
         p.eyeDX += fmod(t, 1.0) < 0.5 ? -3 : 3
     }
+}
+
+/// Being petted: ^ ^ eyes, arms in the air and little jumps for joy.
+private func happyPose(_ t: Double) -> Pose {
+    var p = Pose()
+    p.eyes = .happy
+    let u = fmod(t, 0.55)
+    if u < 0.12 {                                     // crouch
+        p.bodySY = 0.92
+        p.lArm.rot = 20; p.rArm.rot = -20
+    } else {                                          // jump
+        let h = CGFloat(sin(.pi * seg(u, 0.12, 0.55)))
+        p.gy = -9 * h
+        p.bodySY = 1 + 0.03 * h
+        p.lArm.rot = 20 + 55 * h; p.rArm.rot = -20 - 55 * h
+    }
+    return p
 }
 
 private let hammerPeriod = 0.72
@@ -397,6 +417,9 @@ private func viewTop(_ sc: Scene) -> CGFloat {
 enum Renderer {
     /// How far from home the roaming mascot was last drawn (mascot units).
     private(set) static var roamX: CGFloat = 0
+    /// Where the idle mascot was last drawn on the full bar, in points, to tell if a finger is on it.
+    private(set) static var mascotCentre: CGFloat = 0
+    private static var idleX: CGFloat = 0
 
     /// Draws the scene into `bounds` of a flipped view.
     static func draw(_ c: CGContext, bounds: CGRect, scene: Scene, compact: Bool) {
@@ -419,6 +442,7 @@ enum Renderer {
         c.scaleBy(x: s, y: s)
         drawStage(c, scene, compact: compact, roamSpan: roamSpan)
         c.restoreGState()
+        if !compact && scene.mood == .idle { mascotCentre = x0 + (idleX + G.body.midX) * s }
     }
 
     private static let slideTime = 0.4
@@ -443,6 +467,14 @@ enum Renderer {
                 if sc.slideFrom > 0 { p.gx += sc.slideFrom * CGFloat(1 - power2Out(seg(t, 0, slideTime))) }
             }
             if compact { p.gx = 0 }
+            idleX = p.gx
+            if let pt = sc.pet {
+                let x = p.gx
+                p = happyPose(pt)
+                p.gx = x                   // jumps where it was standing
+                drawMascot(c, p, bodyProp: drawRibbon)
+                return
+            }
             applyHealth(&p, sc.health, t)
             drawMascot(c, p)
             if sc.health == .tired { drawSnooze(c, t, x: p.gx) }
@@ -798,6 +830,21 @@ enum Renderer {
         }
         c.beginPath(); c.addRects(rects); c.fillPath()
         c.restoreGState()
+    }
+
+    // MARK: Petting
+
+    /// A pixel bow on the top right corner of the head, drawn in body space so it jumps along.
+    private static func drawRibbon(_ c: CGContext) {
+        let glyph = ["##...##", "###.###", "#######", "###.###", "##...##"]
+        let px: CGFloat = 4
+        for (r, row) in glyph.enumerated() {
+            for (col, ch) in row.enumerated() where ch == "#" {
+                let knot = (2...4).contains(col) && (1...3).contains(r)
+                c.setFillColor(knot ? C.ribbonKnot : C.ribbon)
+                c.fill(CGRect(x: 84 + CGFloat(col) * px, y: -9 + CGFloat(r) * px, width: px + 0.2, height: px + 0.2))
+            }
+        }
     }
 
     // MARK: Tired and stressed

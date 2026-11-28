@@ -24,6 +24,7 @@ A little Claude guy on your MacBook Touch Bar that shows what Claude Code is doi
 
 - **Tap** the bar to jump back to your Claude session.
 - **No session running?** The mascot wanders along the bar on its own. Tap once to see **Tap to start Claude**, then tap again to open Terminal and start `claude` in your home folder.
+- **Pet** the mascot by dragging a finger back and forth over it while it isn't busy: it smiles, puts on a bow and jumps for joy.
 - **Hold** the mascot to see more: the model, how much context is used, and your usage limits.
 
 <img width="1085" height="30" alt="Touch Bar Shot 2026-11-20 at 5 14 20 PM" src="https://github.com/user-attachments/assets/3831dce5-7ea0-47c0-8e76-859f89dd1ff4" />
