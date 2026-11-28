@@ -54,9 +54,7 @@ Click the Touchbar Claude icon in the menu bar for:
 - **Preview animation:** plays any state without a session, for example Building, Needs you, Done + flag, Tired, Stressed, Napping, Stretch break, Morning yawn and the Stretch timer prompt.
 - **Quit Touchbar Claude**
 
-While you take a screenshot (⌘⇧3, ⌘⇧4, ⌘⇧5 or ⌘⇧6), the bar steps aside so the Touch Bar shows the screenshot controls.
-
-## Screenshots
+## Features on the touchbar
 
 These are renders of each state from the app's drawing code, not photos of a Touch Bar. The files are in [`screenshots/`](screenshots).
 
