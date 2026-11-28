@@ -17,6 +17,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>LSUIElement</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>To type /model and /effort into your Claude session when you pick them on the Touch Bar.</string>
   <key>LSMinimumSystemVersion</key><string>10.15</string>
 </dict></plist>
 PLIST
